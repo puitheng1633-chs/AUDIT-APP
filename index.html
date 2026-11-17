@@ -194,11 +194,26 @@ dl.kv dd{margin:0}
 .sample-banner{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);color:var(--ink);border-radius:var(--r);padding:12px 18px;font-size:16px}
 .list-plain{margin:0;padding-left:20px}
 .list-plain li{margin:4px 0}
+/* auth + users */
+.login{min-height:calc(100vh - 160px);display:grid;place-items:center}
+.login .card{width:min(440px,100%);padding:32px}
+.login h1{font-size:28px;margin-bottom:6px}
+.err{color:var(--high);font-size:15px;min-height:1.4em;margin:0}
+.userbox{display:flex;align-items:center;gap:10px}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--ink);color:var(--surface);display:grid;place-items:center;font-weight:600;font-size:15px;text-transform:uppercase}
+.userbox .who{display:flex;flex-direction:column;line-height:1.2}
+.userbox .who b{font-size:15px}.userbox .who span{font-size:13px;color:var(--muted)}
+.sync{font-size:13px;color:var(--muted);min-width:64px;text-align:right}
+.ut th,.ut td{padding:12px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;font-size:16px}
+.ut th{font-size:14px;color:var(--muted);font-weight:500}
+.ut tr.off td{opacity:.55}
+.ut .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+body.signed-out nav,body.signed-out #userBox{display:none}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:600px){main{padding:16px 16px 60px}.top-in{padding:12px 16px}.card{padding:18px}}
 </style>
 </head>
-<body>
+<body class="signed-out">
 <header class="top">
   <div class="top-in">
     <div class="brand"><b>SSA Audit Tracker</b><span id="engLine">—</span></div>
@@ -207,7 +222,9 @@ dl.kv dd{margin:0}
       <a href="#issues" data-v="issues">Issues</a>
       <a href="#files" data-v="files">Files &amp; testing</a>
       <a href="#references" data-v="references">SSA / SFRS(I) library</a>
+      <a href="#users" data-v="users" id="navUsers" hidden>Users</a>
     </nav>
+    <div class="userbox" id="userBox"></div>
   </div>
 </header>
 <main id="main"></main>
@@ -218,6 +235,7 @@ dl.kv dd{margin:0}
 <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls,.csv" multiple hidden>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script>
 "use strict";
 /* ============================================================
@@ -419,22 +437,79 @@ const str = v => (v === null || v === undefined) ? "" : String(v).trim();
 const colLetter = i => { let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=Math.floor((i-1)/26);} return s; };
 
 /* ===================== state ===================== */
-const LS_KEY = "ssa-audit-tracker.v1";
+/* Shared data lives in Supabase (Postgres + Auth). Only view preferences stay in this browser. */
+const SB_URL = "https://bjalgiqjxggmiczaxcgh.supabase.co";
+const SB_KEY = "sb_publishable_RvgFjfpTPZsGdWo2YbBGfg_6lRfweZZ";
+const LOGIN_DOMAIN = "audit-app.local";
+const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+const LS_KEY = "ssa-audit-tracker.ui.v2";
 function defaults(){
   return { settings:{entity:"",fyEnd:"2026-06-30",currency:"SGD",om:250000,pmPct:75,ctPct:5},
-           files:[], issues:[], seq:1, sample:false,
+           engagementId:null, files:[], issues:[], profiles:[], me:null,
            ui:{fileId:null,sheet:null,flaggedOnly:false,filters:{q:"",risk:"",cat:"",status:"active",prio:""},sort:"score"} };
 }
-let state;
-function load(){ try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
-let storageWarned = false;
-function save(){
-  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
-  catch(e){
-    if (!storageWarned){ toast("Browser storage is full or unavailable. Issues stay on screen, but large uploaded sheets may not survive a reload."); storageWarned = true; }
-    try { const lite = JSON.parse(JSON.stringify(state)); lite.files.forEach(f=>f.sheets.forEach(s=>{ s.rows = s.rows.slice(0,2000); s.rowNums = s.rowNums.slice(0,2000); s.truncated = true; })); localStorage.setItem(LS_KEY, JSON.stringify(lite)); } catch(_){}
-  }
+let state = defaults();
+function save(){ try { localStorage.setItem(LS_KEY, JSON.stringify(state.ui)); } catch(e){} }
+function loadUi(){ try { const s = localStorage.getItem(LS_KEY); if (s) state.ui = Object.assign(defaults().ui, JSON.parse(s)); } catch(e){} }
+
+/* ---- sync indicator + error handling ---- */
+let pending = 0;
+function setSync(){ const el = document.getElementById("sync"); if (el) el.textContent = pending ? "Saving…" : "Saved"; }
+async function db(promiseLike, what){
+  pending++; setSync();
+  try {
+    const { data, error } = await promiseLike;
+    if (error) throw error;
+    return data;
+  } catch(e){
+    toast(`Could not ${what || "save"}: ${e.message || e}`);
+    throw e;
+  } finally { pending--; setSync(); }
 }
+
+/* ---- row mapping ---- */
+const fromIssue = r => ({ id:r.id, ref:r.ref_no, key:r.key, auto:r.auto, testId:r.test_id, title:r.title, cat:r.cat, amount:Number(r.amount)||0,
+  count:r.count, detail:r.detail, loc:Object.assign({fileId:r.file_id, fileName:"", sheet:"", rows:[], cols:[]}, r.loc||{}),
+  refs:r.refs||[], extraRefs:r.extra_refs||[], status:r.status, prio:r.prio||"", riskOverride:r.risk_override||"", wOverride:r.w_override,
+  notes:r.notes||"", sample:r.sample, created:r.created_at, createdBy:r.created_by, updatedAt:r.updated_at, updatedBy:r.updated_by });
+const autoRow = i => ({ key:i.key, engagement_id:state.engagementId, file_id:i.loc.fileId, auto:true, test_id:i.testId, title:i.title, cat:i.cat,
+  amount:i.amount||0, count:i.count||0, detail:i.detail||"", loc:i.loc, refs:i.refs, extra_refs:i.extraRefs||[], sample:!!i.sample });
+const fromFile = r => ({ id:r.id, name:r.name, sheets:r.sheets||[], sample:r.sample, uploadedAt:r.uploaded_at, uploadedBy:r.uploaded_by });
+
+/* ---- loading ---- */
+async function loadEngagement(){
+  const rows = await db(sb.from("engagements").select("*").order("created_at").limit(1), "load settings");
+  const e = rows[0]; if (!e) return;
+  state.engagementId = e.id;
+  Object.assign(state.settings, {entity:e.entity||"", fyEnd:e.fy_end||"", currency:e.currency||"SGD", om:Number(e.om), pmPct:Number(e.pm_pct), ctPct:Number(e.ct_pct)});
+}
+async function loadFiles(){ state.files = (await db(sb.from("audit_files").select("*").eq("engagement_id", state.engagementId).order("uploaded_at"), "load files")).map(fromFile); }
+async function loadIssues(){ state.issues = (await db(sb.from("audit_issues").select("*").eq("engagement_id", state.engagementId).order("ref_no"), "load issues")).map(fromIssue); }
+async function loadProfiles(){ state.profiles = await db(sb.from("profiles").select("id,username,full_name,role,active").order("username"), "load users"); }
+async function loadAll(){ await loadEngagement(); await Promise.all([loadFiles(), loadIssues(), loadProfiles()]); }
+const personName = id => { const p = state.profiles.find(x => x.id === id); return p ? (p.full_name || p.username) : "someone"; };
+
+/* ---- writing ---- */
+async function syncAuto(fileIds){
+  const ids = fileIds || state.files.map(f => f.id);
+  if (!ids.length) return;
+  const fresh = state.issues.filter(i => i.auto && ids.includes(i.loc.fileId));
+  const keep = new Set(fresh.map(i => i.key));
+  const existing = await db(sb.from("audit_issues").select("id,key").eq("auto", true).in("file_id", ids), "check issues");
+  const stale = existing.filter(r => !keep.has(r.key)).map(r => r.id);
+  if (stale.length) await db(sb.from("audit_issues").delete().in("id", stale), "remove old issues");
+  for (let k = 0; k < fresh.length; k += 200)
+    await db(sb.from("audit_issues").upsert(fresh.slice(k, k+200).map(autoRow), {onConflict:"key"}), "save issues");
+  await loadIssues();
+}
+async function saveSettings(){
+  const s = S();
+  await db(sb.from("engagements").update({entity:s.entity, fy_end:s.fyEnd || null, currency:s.currency, om:s.om, pm_pct:s.pmPct, ct_pct:s.ctPct}).eq("id", state.engagementId), "save settings");
+}
+async function insertFile(f){
+  await db(sb.from("audit_files").insert({id:f.id, engagement_id:state.engagementId, name:f.name, sheets:f.sheets, sample:!!f.sample, uploaded_by:state.me.id}), `upload ${f.name}`);
+}
+async function updateIssue(i, patch){ await db(sb.from("audit_issues").update(patch).eq("id", i.id), "save the issue"); }
 const S = () => state.settings;
 const PM = () => S().om * S().pmPct/100;
 const CT = () => S().om * S().ctPct/100;
@@ -656,7 +731,7 @@ function retest(fileIds){
       for (const r of runTests(f, sh)){
         const key = `${f.id}|${sh.name}|${r.testId}`, prev = old[key], T = TESTS[r.testId];
         state.issues.push({
-          id: prev ? prev.id : state.seq++, key, auto:true, testId:r.testId, title:T.title, cat:T.cat,
+          id: prev ? prev.id : null, ref: prev ? prev.ref : null, key, auto:true, testId:r.testId, title:T.title, cat:T.cat,
           amount:r.amount, count:r.count, detail:r.detail,
           loc:{fileId:f.id, fileName:f.name, sheet:sh.name, rows:r.rows, cols:r.cols.filter(c => c >= 0)},
           refs: prev && prev.extraRefs ? T.refs.concat(prev.extraRefs) : T.refs.slice(), extraRefs: prev ? prev.extraRefs || [] : [],
@@ -677,7 +752,7 @@ function score(i){
 const riskOf = i => i.riskOverride || (score(i) >= 5 ? "High" : score(i) >= 3 ? "Medium" : "Low");
 const prioOf = i => i.prio || ({High:"P1",Medium:"P2",Low:"P3"})[riskOf(i)];
 const isActive = i => i.status !== "Cleared";
-const issueNo = i => "AT-" + String(i.id).padStart(3,"0");
+const issueNo = i => i.ref ? "AT-" + String(i.ref).padStart(3,"0") : "AT-new";
 function refLabel(code, p){ return `${code}${p ? (code.startsWith("SFRS") ? " para " : ".") + p : ""}`; }
 
 /* ===================== sample data ===================== */
@@ -755,14 +830,15 @@ function buildSample(){
   ]};
   return file;
 }
-function loadSample(){
-  state.files = state.files.filter(f => !f.sample);
-  state.issues = state.issues.filter(i => !i.sample);
-  state.files.unshift(buildSample());
-  state.sample = true;
-  if (!S().entity) S().entity = "Acme Precision Pte Ltd (sample)";
-  retest(["sample"]);
-  state.ui.fileId = "sample"; state.ui.sheet = "General Ledger";
+async function loadSample(){
+  if (state.files.some(f => f.id === "sample")){ toast("The sample is already loaded."); return; }
+  const f = buildSample();
+  await insertFile(f);
+  state.files.unshift(f);
+  if (!S().entity){ S().entity = "Acme Precision Pte Ltd (sample)"; await saveSettings(); }
+  retest(["sample"]); await syncAuto(["sample"]);
+  state.ui.fileId = "sample"; state.ui.sheet = "General Ledger"; save();
+  render(); toast("Sample loaded for everyone on the team.");
 }
 
 /* ===================== UI ===================== */
@@ -771,18 +847,25 @@ const $ = (s, r=document) => r.querySelector(s);
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 4200); }
 function route(){
   const h = (location.hash || "#overview").slice(1);
-  view = ["overview","issues","files","references"].includes(h) ? h : "overview";
+  if (!state.me){ renderLogin(); return; }
+  view = ["overview","issues","files","references","users"].includes(h) ? h : "overview";
+  if (view === "users" && state.me.role !== "admin") view = "overview";
   document.querySelectorAll("#nav a").forEach(a => { if (a.dataset.v === view) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); });
   render();
 }
 function render(){
   $("#engLine").textContent = `${S().entity || "Untitled engagement"} · FYE ${S().fyEnd || "not set"} · SFRS(I) / SSA`;
-  const v = {overview:vOverview, issues:vIssues, files:vFiles, references:vRefs}[view];
-  $("#main").innerHTML = (state.sample && state.files.some(f => f.sample) ? sampleBanner() : "") + v();
+  if (!state.me) return;
+  const v = {overview:vOverview, issues:vIssues, files:vFiles, references:vRefs, users:vUsers}[view];
+  $("#main").innerHTML = (view !== "users" ? sampleBanner() : "") + v();
+  if (view === "users") refreshUsers();
   if (view === "files") bindFiles();
   if (view === "references" && refFocus) { const el = document.getElementById(refFocus); if (el) el.scrollIntoView({block:"center"}); }
 }
 function sampleBanner(){
+  if (!state.files.length) return `<div class="sample-banner"><span><b>No files yet.</b> Upload a general ledger, journal listing or trial balance to run the tests, or load the fictional sample to see how it works.</span>
+    <span class="row"><button class="btn sm" data-act="upload">Upload Excel</button><button class="btn sm ghost" data-act="load-sample">Load sample data</button></span></div>`;
+  if (!state.files.some(f => f.sample)) return "";
   return `<div class="sample-banner"><span><b>Sample data loaded.</b> A fictional general ledger and trial balance are shown so you can see how the tests work. Upload your own Excel file to start.</span>
   <span class="row"><button class="btn sm" data-act="upload">Upload Excel</button><button class="btn sm ghost" data-act="remove-sample">Remove sample</button></span></div>`;
 }
@@ -797,7 +880,7 @@ function colsText(i){
 function sortedIssues(list){
   const s = state.ui.sort;
   return list.slice().sort((a,b) => s === "amount" ? Math.abs(b.amount)-Math.abs(a.amount)
-    : s === "newest" ? b.id - a.id
+    : s === "newest" ? (b.ref||0) - (a.ref||0)
     : (score(b)-score(a)) || (Math.abs(b.amount)-Math.abs(a.amount)));
 }
 function issueCard(i){
@@ -870,7 +953,7 @@ function settingsCard(){
         <div class="field"><label>Thresholds</label><div class="num" style="padding-top:8px;font-size:15px">PM ${fmt(PM())} · CT ${fmt(CT())}</div></div>
       </div>
       <div class="row"><button class="btn primary" type="submit">Apply and re-run tests</button>
-        <span id="resetZone"><button class="btn ghost danger" type="button" data-act="reset-ask">Clear all data</button></span></div>
+        ${state.me && state.me.role==="admin" ? `<span id="resetZone"><button class="btn ghost danger" type="button" data-act="reset-ask">Clear all data</button></span>` : ""}</div>
     </form>
   </div>`;
 }
@@ -911,7 +994,7 @@ function vFiles(){
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose Excel files to upload">
         <b>Drop Excel files here</b><span class="muted">or click to choose. General ledgers, journal listings, trial balances and sub-ledgers work best.</span>
       </div>
-      <p class="note" style="margin:12px 0 0">Files are read in your browser and kept in this browser's local storage. Nothing is sent anywhere.</p>
+      <p class="note" style="margin:12px 0 0">Files are read in your browser, then saved to the team's Supabase database so every signed-in member sees the same files and issues.</p>
     </div>
     <div class="card">
       <div class="card-head"><h2>Files</h2><p>${state.files.length} file(s)</p></div>
@@ -960,7 +1043,9 @@ function bindFiles(){
   document.querySelectorAll("[data-map]").forEach(s => s.onchange = () => {
     const f = state.files.find(x => x.id === state.ui.fileId) || state.files[0];
     const sh = f.sheets.find(x => x.name === state.ui.sheet) || f.sheets[0];
-    sh.map[s.dataset.map] = +s.value; retest([f.id]); save(); render(); toast("Mapping updated and tests re-run.");
+    sh.map[s.dataset.map] = +s.value; retest([f.id]); render();
+    db(sb.from("audit_files").update({sheets:f.sheets}).eq("id", f.id), "save the mapping")
+      .then(() => syncAuto([f.id])).then(() => { render(); toast("Mapping updated and tests re-run."); }).catch(() => {});
   });
   const fo = $("#flaggedOnly"); if (fo) fo.onchange = () => { state.ui.flaggedOnly = fo.checked; save(); render(); };
   if (pendingRow){ const el = document.getElementById("r-"+pendingRow); if (el){ el.classList.add("focus"); el.scrollIntoView({block:"center"}); } pendingRow = null; }
@@ -974,9 +1059,11 @@ async function handleFiles(list){
       const buf = await file.arrayBuffer();
       const f = parseWorkbook(new Uint8Array(buf), file.name);
       if (!f.sheets.length){ toast(`${file.name} has no readable sheets.`); continue; }
-      state.files.push(f); retest([f.id]); added++;
+      toast(`Uploading ${file.name}…`);
+      await insertFile(f);
+      state.files.push(f); retest([f.id]); await syncAuto([f.id]); added++;
       state.ui.fileId = f.id; state.ui.sheet = f.sheets[0].name;
-    } catch(err){ toast(`Could not read ${file.name}: ${err.message}`); }
+    } catch(err){ toast(`Could not upload ${file.name}: ${err.message || err}`); }
   }
   if (added){ save(); render(); const n = state.issues.filter(i=>i.auto).length - before; toast(`${added} file(s) tested · ${n} issue(s) raised.`); }
   $("#fileInput").value = "";
@@ -1030,6 +1117,7 @@ function openIssue(id){
   $("#drawer").innerHTML = `<div class="drawer-in">
     <div class="dhead"><div><div class="id mono muted">${issueNo(i)} · ${i.auto?"Automated test":"Manual issue"}</div><h2>${esc(i.title)}</h2></div>
       <button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+    <div class="note">Raised ${esc(new Date(i.created).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"}))}${i.updatedAt ? ` · last edited by ${esc(personName(i.updatedBy))}, ${esc(new Date(i.updatedAt).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"}))}` : ""}</div>
     <div class="row">${riskChip(r)}<span class="chip p">${prioOf(i)}</span><span class="chip cat">${esc(i.cat)}</span>${statusChip(i.status)}<span class="chip cat">Score ${score(i)}/6</span></div>
     <div class="card"><div class="stat"><div class="label">Amount at issue</div><div class="value num">${i.amount ? money(i.amount) : "—"}</div>
       <div class="sub">${i.amount ? `${(Math.abs(i.amount)/PM()*100).toFixed(0)}% of performance materiality · ${(Math.abs(i.amount)/S().om*100).toFixed(0)}% of overall materiality` : "No monetary amount for this issue"}</div></div></div>
@@ -1123,6 +1211,140 @@ async function copyOut(text, msg){
   }
 }
 
+/* ===================== auth ===================== */
+const toEmail = u => { u = u.trim().toLowerCase(); return u.includes("@") ? u : `${u}@${LOGIN_DOMAIN}`; };
+function renderLogin(msg){
+  document.body.classList.add("signed-out");
+  $("#engLine").textContent = "Sign in to continue";
+  closeDrawer();
+  $("#main").innerHTML = `<div class="login"><div class="card">
+    <h1>Sign in</h1><p class="muted" style="margin:0 0 20px">SSA Audit Tracker · audit testing to SSA and SFRS(I)</p>
+    ${!sb ? `<p class="err">The sign-in service did not load. Check your connection and reload the page.</p>` : ""}
+    <form id="loginForm" class="grid" style="gap:14px">
+      <div class="field"><label for="l-user">Username</label><input class="input" id="l-user" autocomplete="username" required autofocus></div>
+      <div class="field"><label for="l-pw">Password</label><input class="input" id="l-pw" type="password" autocomplete="current-password" required></div>
+      <p class="err" id="l-err">${esc(msg||"")}</p>
+      <button class="btn primary" type="submit" style="justify-content:center">Sign in</button>
+    </form>
+    <p class="note" style="margin:16px 0 0">Accounts are created by your engagement admin. Ask them if you need access or a password reset.</p>
+  </div></div>`;
+}
+async function signIn(){
+  const btn = $("#loginForm button"), err = $("#l-err");
+  btn.disabled = true; btn.textContent = "Signing in…"; err.textContent = "";
+  const { error } = await sb.auth.signInWithPassword({ email: toEmail($("#l-user").value), password: $("#l-pw").value });
+  if (error){ err.textContent = /invalid/i.test(error.message) ? "Username or password is incorrect." : /banned/i.test(error.message) ? "This account has been deactivated. Contact your admin." : error.message; btn.disabled = false; btn.textContent = "Sign in"; }
+}
+let booting = false;
+async function startSession(session){
+  if (booting) return; booting = true;
+  try {
+    const { data: prof } = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+    if (!prof || !prof.active){ await sb.auth.signOut(); renderLogin("This account is not active in the audit app. Contact your admin."); return; }
+    state.me = prof;
+    document.body.classList.remove("signed-out");
+    $("#navUsers").hidden = prof.role !== "admin";
+    $("#userBox").innerHTML = `<span class="sync" id="sync">Saved</span><span class="avatar" aria-hidden="true">${esc((prof.full_name||prof.username)[0])}</span>
+      <span class="who"><b>${esc(prof.full_name || prof.username)}</b><span>${esc(prof.username)} · ${esc(prof.role)}</span></span>
+      <button class="btn sm ghost" data-act="pw-modal">Change password</button><button class="btn sm" data-act="signout">Sign out</button>`;
+    $("#main").innerHTML = `<div class="card empty">Loading engagement data…</div>`;
+    await loadAll();
+    subscribe();
+    route();
+  } catch(e){ renderLogin("Could not load your data. " + (e.message || "")); }
+  finally { booting = false; }
+}
+function endSession(){
+  state = Object.assign(defaults(), {ui: state.ui});
+  if (channel){ sb.removeChannel(channel); channel = null; }
+  $("#userBox").innerHTML = ""; $("#navUsers").hidden = true;
+  renderLogin();
+}
+let channel = null, rtTimer = null;
+function subscribe(){
+  if (channel) return;
+  channel = sb.channel("issues").on("postgres_changes", {event:"*", schema:"public", table:"audit_issues"}, () => {
+    clearTimeout(rtTimer);
+    rtTimer = setTimeout(async () => { if (pending) return; await loadIssues(); if (!openId && !document.querySelector("#modal.open") && view !== "users") render(); }, 800);
+  }).subscribe();
+}
+function passwordModal(){
+  $("#modal").innerHTML = `<div class="card" role="dialog" aria-modal="true" aria-labelledby="pw-h"><div class="card-head"><h2 id="pw-h">Change your password</h2><button class="btn ghost" data-act="modal-close" aria-label="Close">✕</button></div>
+    <form id="pwForm" class="grid" style="gap:12px">
+      <div class="field"><label for="pw-1">New password</label><input class="input" id="pw-1" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label for="pw-2">Repeat new password</label><input class="input" id="pw-2" type="password" autocomplete="new-password" minlength="8" required></div>
+      <p class="err" id="pw-err"></p>
+      <div class="row"><button class="btn primary" type="submit">Update password</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>
+    </form></div>`;
+  $("#modal").classList.add("open"); $("#pw-1").focus();
+}
+async function changePassword(){
+  const a = $("#pw-1").value, b = $("#pw-2").value, err = $("#pw-err");
+  if (a !== b){ err.textContent = "The two passwords do not match."; return; }
+  if (a.length < 8){ err.textContent = "Use at least 8 characters."; return; }
+  const { error } = await sb.auth.updateUser({ password: a });
+  if (error){ err.textContent = error.message; return; }
+  $("#modal").classList.remove("open"); toast("Password changed.");
+}
+
+/* ===================== user management (admins) ===================== */
+let usersCache = null;
+async function adminCall(body, okMsg){
+  pending++; setSync();
+  try {
+    const { data, error } = await sb.functions.invoke("manage-users", { body });
+    if (error){
+      let msg = error.message;
+      try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch(_){}
+      throw new Error(msg);
+    }
+    if (data && data.error) throw new Error(data.error);
+    if (okMsg){ toast(okMsg); await refreshUsers(); await loadProfiles(); }
+    return data;
+  } catch(e){ toast(e.message || String(e)); throw e; }
+  finally { pending--; setSync(); }
+}
+async function refreshUsers(){
+  try { const d = await adminCall({action:"list"}); usersCache = d.users; } catch(e){ usersCache = usersCache || []; }
+  const box = document.getElementById("usersTable"); if (box) box.innerHTML = usersTable();
+}
+function usersTable(){
+  if (!usersCache) return `<div class="empty">Loading users…</div>`;
+  const when = t => t ? new Date(t).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"}) : "Never";
+  return `<div style="overflow-x:auto"><table class="ut"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last sign-in</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${usersCache.map(u => { const self = u.id === state.me.id;
+      return `<tr class="${u.active?"":"off"}"><td><b>${esc(u.full_name || u.username)}</b><div class="note mono">${esc(u.username)}</div></td>
+        <td><select class="input" data-role="${u.id}" ${self?"disabled":""} aria-label="Role for ${esc(u.username)}">${["admin","auditor","reviewer"].map(r=>`<option ${r===u.role?"selected":""}>${r}</option>`).join("")}</select></td>
+        <td>${u.active ? `<span class="chip Low">Active</span>` : `<span class="chip status">Deactivated</span>`}</td>
+        <td class="note">${esc(when(u.last_sign_in_at))}</td>
+        <td><div class="acts">
+          <button class="btn sm" data-act="u-reset-ask" data-id="${u.id}">Reset password</button>
+          ${self ? `<span class="note">This is you</span>` : `<button class="btn sm" data-act="u-toggle" data-id="${u.id}" data-active="${u.active}">${u.active?"Deactivate":"Reactivate"}</button>
+          <button class="btn sm ghost danger" data-act="u-del-ask" data-id="${u.id}">Delete</button>`}
+        </div></td></tr>`; }).join("")}
+  </tbody></table></div>`;
+}
+function vUsers(){
+  return `<div class="grid g2" style="grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)">
+    <div class="card"><div class="card-head"><h2>Team members</h2><p>Only admins see this page</p></div><div id="usersTable">${usersTable()}</div></div>
+    <div class="card"><div class="card-head"><h2>Add a user</h2></div>
+      <form id="addUser" class="grid" style="gap:12px">
+        <div class="field"><label for="u-name">Username</label><input class="input" id="u-name" required pattern="[a-z0-9._\\-]{2,32}" placeholder="e.g. siti" autocomplete="off"><span class="note">Lowercase letters, numbers, dot, dash or underscore. Used to sign in.</span></div>
+        <div class="field"><label for="u-full">Full name</label><input class="input" id="u-full" placeholder="e.g. Siti Rahman"></div>
+        <div class="field"><label for="u-role">Role</label><select class="input" id="u-role"><option value="auditor">Auditor: test, raise and update issues</option><option value="reviewer">Reviewer: same access, marked as reviewer</option><option value="admin">Admin: also manages users</option></select></div>
+        <div class="field"><label for="u-pw">Initial password</label><input class="input" id="u-pw" type="text" required minlength="6" autocomplete="off"><span class="note">Share it securely. The user can change it after signing in.</span></div>
+        <p class="err" id="u-err"></p>
+        <button class="btn primary" type="submit" style="justify-content:center">Create user</button>
+      </form></div>
+  </div>`;
+}
+async function addUser(){
+  const err = $("#u-err"); err.textContent = "";
+  const body = {action:"create", username:$("#u-name").value.trim().toLowerCase(), full_name:$("#u-full").value.trim(), role:$("#u-role").value, password:$("#u-pw").value};
+  try { await adminCall(body, `User ${body.username} created. They sign in with username "${body.username}".`); $("#addUser").reset(); }
+  catch(e){ err.textContent = e.message; }
+}
+
 /* ===================== events ===================== */
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -1132,15 +1354,21 @@ document.addEventListener("click", e => {
   else if (a === "ref"){ e.stopPropagation(); refFocus = "p-"+slug(t.dataset.code)+"-"+slug(t.dataset.para); closeDrawer(); if (location.hash === "#references") render(); else location.hash = "references"; }
   else if (a === "filter"){ Object.assign(state.ui.filters, {cat:t.dataset.cat, risk:t.dataset.risk, status:"active", prio:"", q:""}); save(); location.hash = "issues"; }
   else if (a === "upload"){ location.hash = "files"; $("#fileInput").click(); }
-  else if (a === "remove-sample"){ state.files = state.files.filter(f => !f.sample); state.issues = state.issues.filter(i => !i.sample); state.sample = false; if (S().entity.includes("(sample)")) S().entity = ""; state.ui.fileId = null; save(); render(); toast("Sample removed."); }
+  else if (a === "load-sample"){ loadSample().catch(() => {}); }
+  else if (a === "remove-sample"){ (async () => {
+      await db(sb.from("audit_files").delete().eq("id","sample"), "remove the sample");
+      if (S().entity.includes("(sample)")){ S().entity = ""; await saveSettings(); }
+      state.ui.fileId = null; save(); await loadAll(); render(); toast("Sample removed."); })().catch(() => {}); }
   else if (a === "sheet"){ state.ui.fileId = t.dataset.file; state.ui.sheet = t.dataset.sheet; save(); render(); }
-  else if (a === "del-file"){ const id = t.dataset.file; state.files = state.files.filter(f => f.id !== id); state.issues = state.issues.filter(i => !(i.auto && i.loc.fileId === id)); if (id==="sample") state.sample=false; state.ui.fileId = null; save(); render(); toast("File removed with its automated issues."); }
+  else if (a === "del-file"){ const id = t.dataset.file;
+    db(sb.from("audit_files").delete().eq("id", id), "remove the file").then(async () => { state.ui.fileId = null; save(); await Promise.all([loadFiles(), loadIssues()]); render(); toast("File removed with its issues."); }).catch(() => {}); }
   else if (a === "goto"){ const i = state.issues.find(x => x.id == t.dataset.id); state.ui.fileId = i.loc.fileId; state.ui.sheet = i.loc.sheet; state.ui.flaggedOnly = false; pendingRow = i.loc.rows[0]; save(); closeDrawer(); if (location.hash === "#files") render(); else location.hash = "files"; }
   else if (a === "save-issue"){
     const i = state.issues.find(x => x.id == t.dataset.id);
     i.status = $("#d-status").value; i.prio = $("#d-prio").value; i.riskOverride = $("#d-risk").value; i.cat = $("#d-cat").value;
     i.amount = num($("#d-amt").value) || 0; i.notes = $("#d-notes").value;
-    save(); render(); openIssue(i.id); toast("Issue saved.");
+    updateIssue(i, {status:i.status, prio:i.prio, risk_override:i.riskOverride, cat:i.cat, amount:i.amount, notes:i.notes})
+      .then(async () => { await loadIssues(); render(); openIssue(i.id); toast("Issue saved for the team."); }).catch(() => {});
   }
   else if (a === "add-ref"){
     const i = state.issues.find(x => x.id == t.dataset.id), code = $("#ar-code").value;
@@ -1148,14 +1376,26 @@ document.addEventListener("click", e => {
     const ex = i.refs.find(r => r[0] === code);
     if (ex) ex[1] = [...new Set(ex[1].concat(ps))]; else i.refs.push([code, ps]);
     if (i.auto){ i.extraRefs = i.extraRefs || []; i.extraRefs.push([code, ps]); }
-    save(); render(); openIssue(i.id);
+    updateIssue(i, {refs:i.refs, extra_refs:i.extraRefs||[]}).then(() => { render(); openIssue(i.id); }).catch(() => {});
   }
   else if (a === "del-ask"){ $("#delZone").innerHTML = `<span class="row"><span class="muted">Delete this issue?</span><button class="btn sm danger" data-act="del" data-id="${t.dataset.id}">Delete</button><button class="btn sm ghost" data-act="del-cancel" data-id="${t.dataset.id}">Keep</button></span>`; }
   else if (a === "del-cancel"){ openIssue(t.dataset.id); }
-  else if (a === "del"){ state.issues = state.issues.filter(x => x.id != t.dataset.id); save(); closeDrawer(); render(); toast("Issue deleted."); }
+  else if (a === "del"){ db(sb.from("audit_issues").delete().eq("id", t.dataset.id), "delete the issue").then(async () => { await loadIssues(); closeDrawer(); render(); toast("Issue deleted."); }).catch(() => {}); }
   else if (a === "reset-ask"){ $("#resetZone").innerHTML = `<span class="row"><span class="muted">Remove all files, issues and settings?</span><button class="btn sm danger" type="button" data-act="reset">Clear all</button><button class="btn sm ghost" type="button" data-act="reset-cancel">Cancel</button></span>`; }
   else if (a === "reset-cancel"){ render(); }
-  else if (a === "reset"){ state = defaults(); save(); render(); toast("All data cleared. Use Load sample or upload a file to start again."); }
+  else if (a === "reset"){ (async () => {
+      await db(sb.from("audit_issues").delete().eq("engagement_id", state.engagementId), "clear issues");
+      await db(sb.from("audit_files").delete().eq("engagement_id", state.engagementId), "clear files");
+      Object.assign(state.settings, defaults().settings); await saveSettings();
+      await loadAll(); render(); toast("All files, issues and settings cleared for the team."); })().catch(() => {}); }
+  else if (a === "signout"){ sb.auth.signOut().then(() => toast("Signed out.")); }
+  else if (a === "pw-modal") passwordModal();
+  else if (a === "u-reset-ask"){ const id = t.dataset.id; t.closest(".acts").innerHTML = `<input class="input" id="pw-${id}" type="text" placeholder="New password" style="width:170px" aria-label="New password"><button class="btn sm primary" data-act="u-reset" data-id="${id}">Set</button><button class="btn sm ghost" data-act="u-refresh">Cancel</button>`; $("#pw-"+id).focus(); }
+  else if (a === "u-reset"){ const pw = $("#pw-"+t.dataset.id).value; adminCall({action:"reset_password", id:t.dataset.id, password:pw}, "Password updated. Share it with the user securely."); }
+  else if (a === "u-toggle"){ adminCall({action:"update", id:t.dataset.id, active:t.dataset.active !== "true"}, t.dataset.active === "true" ? "User deactivated and blocked from signing in." : "User reactivated."); }
+  else if (a === "u-del-ask"){ t.closest(".acts").innerHTML = `<span class="muted">Delete permanently?</span><button class="btn sm danger" data-act="u-del" data-id="${t.dataset.id}">Delete</button><button class="btn sm ghost" data-act="u-refresh">Keep</button>`; }
+  else if (a === "u-del"){ adminCall({action:"delete", id:t.dataset.id}, "User deleted."); }
+  else if (a === "u-refresh"){ refreshUsers(); }
   else if (a === "new") newIssueModal();
   else if (a === "modal-close") $("#modal").classList.remove("open");
   else if (a === "export") exportCsv();
@@ -1169,21 +1409,27 @@ $("#scrim").addEventListener("click", closeDrawer);
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") $("#modal").classList.remove("open"); });
 document.addEventListener("submit", e => {
   e.preventDefault();
+  if (e.target.id === "loginForm"){ signIn(); return; }
+  if (e.target.id === "pwForm"){ changePassword(); return; }
+  if (e.target.id === "addUser"){ addUser(); return; }
   if (e.target.id === "settingsForm"){
     const s = S();
     s.entity = $("#s-entity").value.trim(); s.fyEnd = $("#s-fy").value; s.currency = $("#s-cur").value.trim() || "SGD";
     s.om = Math.max(0, num($("#s-om").value) || 0); s.pmPct = Math.min(100, Math.max(1, num($("#s-pm").value) || 75)); s.ctPct = Math.min(20, Math.max(0, num($("#s-ct").value) ?? 5));
-    retest(); save(); render(); toast("Settings applied. All files re-tested.");
+    retest(); render();
+    saveSettings().then(() => syncAuto()).then(() => { render(); toast("Settings applied and all files re-tested for the team."); }).catch(() => {});
   }
   if (e.target.id === "newIssue"){
     const loc = $("#n-loc").value.split("|"), f = state.files.find(x => x.id === loc[0]);
     const sh = f && f.sheets.find(s => s.name === loc.slice(1).join("|"));
     const ps = $("#n-para").value.split(/[,;]/).map(s => s.trim()).filter(Boolean);
-    const i = {id:state.seq++, auto:false, testId:"manual", title:$("#n-title").value.trim(), cat:$("#n-cat").value, wOverride:+$("#n-w").value,
+    const i = {id:null, auto:false, testId:"manual", title:$("#n-title").value.trim(), cat:$("#n-cat").value, wOverride:+$("#n-w").value,
       amount:num($("#n-amt").value) || 0, count:0, detail:$("#n-desc").value.trim(), why:"",
       loc:{fileId:f?f.id:null, fileName:f?f.name:"", sheet:sh?sh.name:"", rows:$("#n-rows").value.split(/[,\s]+/).map(Number).filter(n => n > 0), cols:[]},
       refs: ps.length || $("#n-code").value ? [[$("#n-code").value, ps]] : [], status:"Open", prio:"", notes:"", created:new Date().toISOString()};
-    state.issues.push(i); save(); $("#modal").classList.remove("open"); render(); openIssue(i.id); toast(`${issueNo(i)} added.`);
+    db(sb.from("audit_issues").insert({engagement_id:state.engagementId, file_id:i.loc.fileId, auto:false, test_id:"manual", title:i.title, cat:i.cat,
+        w_override:i.wOverride, amount:i.amount, detail:i.detail, loc:i.loc, refs:i.refs, created_by:state.me.id}).select().single(), "add the issue")
+      .then(async row => { await loadIssues(); $("#modal").classList.remove("open"); render(); openIssue(row.id); toast(`AT-${String(row.ref_no).padStart(3,"0")} added.`); }).catch(() => {});
   }
 });
 document.addEventListener("input", e => {
@@ -1194,15 +1440,21 @@ document.addEventListener("change", e => {
   const m = {"f-risk":"risk","f-cat":"cat","f-status":"status","f-prio":"prio"};
   if (m[id]){ F[m[id]] = e.target.value; save(); render(); }
   if (id === "f-sort"){ state.ui.sort = e.target.value; save(); render(); }
+  if (e.target.dataset.role){ adminCall({action:"update", id:e.target.dataset.role, role:e.target.value}, "Role updated.").catch(() => refreshUsers()); }
 });
 $("#fileInput").addEventListener("change", e => handleFiles(e.target.files));
 window.addEventListener("hashchange", route);
 
 /* ===================== boot ===================== */
-state = load();
-if (!state){ state = defaults(); loadSample(); save(); }
-state.ui = Object.assign(defaults().ui, state.ui || {});
-route();
+loadUi();
+window.addEventListener("focus", () => { if (state.me && !pending && !openId) Promise.all([loadFiles(), loadIssues()]).then(render).catch(() => {}); });
+if (!sb){ renderLogin(); }
+else {
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_OUT" || !session){ if (state.me || event === "INITIAL_SESSION") endSession(); return; }
+    if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && !state.me) setTimeout(() => startSession(session), 0);
+  });
+}
 </script>
 </body>
 </html>

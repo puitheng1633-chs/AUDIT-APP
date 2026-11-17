@@ -7,7 +7,24 @@ A single-page audit testing tool for financial documents, aligned to Singapore S
 - **Standards links**: each issue cites the relevant SSA / SFRS(I) paragraphs and highlights them in the built-in library.
 - **Excel upload**: `.xlsx`, `.xls` and `.csv` files are parsed in the browser (SheetJS) and run through automated tests (journal entry testing, cut-off, duplicates, round sums, weekend postings, related parties, estimates, sequence gaps, Benford, sign anomalies, formula errors).
 
-All data stays in the browser's `localStorage`. Nothing is uploaded to a server.
+## Sign-in and shared data (Supabase)
+
+Users sign in with a username and password. Passwords are held by Supabase Auth (`auth.users`); the app never stores them. Each username maps to the login email `<username>@audit-app.local`.
+
+| Table | Holds |
+|---|---|
+| `profiles` | username, full name, role (`admin`, `auditor`, `reviewer`), active flag; linked 1:1 to `auth.users` |
+| `engagements` | entity, reporting date, currency, materiality settings |
+| `audit_files` | uploaded workbooks (parsed sheets as JSON) |
+| `audit_issues` | issues, status, priority, notes, SSA/SFRS(I) references, who changed them |
+
+Row level security lets only **active** members read or change audit data. Admins manage users on the **Users** page, which calls the `manage-users` edge function (it holds the service key server-side). Issue changes reach teammates live through Supabase Realtime.
+
+Seed users: `priya` (admin), `dan`, `marcus` (auditors), initial password `password`. Change these after first sign-in.
+
+Schema: `supabase/migrations/`. Edge function: `supabase/functions/manage-users/`.
+
+The publishable key in `index.html` is meant to be public; access is enforced by row level security.
 
 > Paragraph text in the app is a short paraphrase. Always confirm against the official SSA (ISCA) and SFRS(I) (ASC) text for the engagement period.
 
