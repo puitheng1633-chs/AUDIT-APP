@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSA Audit Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: sticky top bar with four views; cards on a cool grey field; orange is reserved for actions and "look here" highlights. */
+:root{
+  --bg:#EEF0F2; --surface:#FFFFFF; --surface-2:#F6F7F8; --ink:#1C2024; --muted:#5B636D; --line:#DADEE3;
+  --accent:#D45F1C; --accent-soft:#FCEBDF; --accent-ink:#963F0E;
+  --high:#A2343B; --high-soft:#F6E2E3; --med:#86680F; --med-soft:#F3ECD5; --low:#3D6B57; --low-soft:#E0EDE6;
+  --font:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r:14px; --shadow:0 1px 2px rgba(20,24,28,.05), 0 4px 14px rgba(20,24,28,.04);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14171A; --surface:#1C2024; --surface-2:#22272C; --ink:#E6E8EA; --muted:#9BA3AC; --line:#30363C;
+    --accent:#F0803F; --accent-soft:#3A2416; --accent-ink:#F7A574;
+    --high:#E58389; --high-soft:#3A2023; --med:#D9B85A; --med-soft:#332B16; --low:#80C2A2; --low-soft:#1C3128;
+    --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14171A; --surface:#1C2024; --surface-2:#22272C; --ink:#E6E8EA; --muted:#9BA3AC; --line:#30363C;
+  --accent:#F0803F; --accent-soft:#3A2416; --accent-ink:#F7A574;
+  --high:#E58389; --high-soft:#3A2023; --med:#D9B85A; --med-soft:#332B16; --low:#80C2A2; --low-soft:#1C3128;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.25}
+h2{font-size:22px;font-weight:600}
+h3{font-size:18px;font-weight:600}
+button,input,select,textarea{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono);font-size:.92em}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:6px}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1320px;margin:0 auto;padding:14px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;margin-right:auto}
+.brand b{font-size:20px;font-weight:700;letter-spacing:-.01em}
+.brand span{font-size:14px;color:var(--muted)}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav a{padding:9px 16px;border-radius:999px;text-decoration:none;color:var(--muted);font-weight:500;font-size:16px}
+nav a:hover{color:var(--ink);background:var(--surface)}
+nav a[aria-current="page"]{background:var(--ink);color:var(--surface)}
+main{max-width:1320px;margin:0 auto;padding:24px 24px 80px;display:flex;flex-direction:column;gap:20px}
+
+/* cards */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:22px 24px;box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.card-head p{margin:0;color:var(--muted);font-size:15px}
+.grid{display:grid;gap:20px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.g2{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+@media (max-width:960px){.g2{grid-template-columns:1fr}}
+.stat .label{font-size:15px;color:var(--muted);font-weight:500}
+.stat .value{font-size:34px;font-weight:600;margin-top:4px;line-height:1.1}
+.stat .sub{font-size:14px;color:var(--muted);margin-top:6px}
+.stat.accent{border-color:var(--accent)}
+.stat.accent .value{color:var(--accent-ink)}
+
+/* buttons */
+.btn{text-decoration:none;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);padding:9px 16px;border-radius:10px;cursor:pointer;font-weight:500;font-size:16px;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.ghost:hover{background:var(--surface-2)}
+.btn.danger{color:var(--high)}
+.btn.sm{padding:6px 12px;font-size:15px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:14px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.chip.High{background:var(--high-soft);color:var(--high)}
+.chip.Medium{background:var(--med-soft);color:var(--med)}
+.chip.Low{background:var(--low-soft);color:var(--low)}
+.chip.p{background:var(--ink);color:var(--surface)}
+.chip.cat{background:var(--surface-2);color:var(--muted);border-color:var(--line);font-weight:500}
+.chip.status{background:transparent;border-color:var(--line);color:var(--muted);font-weight:500}
+.chip.status.s-confirmed{border-color:var(--high);color:var(--high)}
+.chip.status.s-cleared{border-color:var(--low);color:var(--low)}
+.chip.ref{background:transparent;border-color:var(--accent);color:var(--accent-ink);font-family:var(--mono);font-weight:500;font-size:13.5px;cursor:pointer}
+.chip.ref:hover{background:var(--accent-soft)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}
+
+/* issue cards */
+.issues{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
+@media (max-width:440px){.issues{grid-template-columns:1fr}}
+.icard{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:20px 22px 18px 26px;cursor:pointer;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow);text-align:left;width:100%}
+.icard:hover{border-color:var(--muted)}
+.icard::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:5px;border-radius:0 4px 4px 0;background:var(--sev)}
+.icard[data-risk="High"]{--sev:var(--high)} .icard[data-risk="Medium"]{--sev:var(--med)} .icard[data-risk="Low"]{--sev:var(--low)}
+.icard.cleared{opacity:.6}
+.icard .t{font-size:18.5px;font-weight:600;line-height:1.3}
+.icard .amt{font-size:26px;font-weight:600;line-height:1}
+.icard .amt small{font-size:14px;color:var(--muted);font-weight:500;font-family:var(--font);margin-left:6px}
+.icard .where{font-size:15px;color:var(--muted);display:flex;gap:8px;align-items:flex-start;overflow-wrap:anywhere;min-width:0}
+.icard .where b{color:var(--ink);font-weight:500}
+.icard .id{font-family:var(--mono);font-size:13.5px;color:var(--muted)}
+.icard .tophead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+
+/* toolbar */
+.toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:14px;color:var(--muted);font-weight:500}
+.input,select.input,textarea.input{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:16px;min-width:0}
+textarea.input{min-height:110px;resize:vertical;line-height:1.5}
+.input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* matrix */
+table{border-collapse:collapse;width:100%}
+.matrix th,.matrix td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:16px}
+.matrix th{font-size:14px;color:var(--muted);font-weight:500}
+.matrix td.c{text-align:center;width:88px}
+.mcell{display:inline-flex;min-width:40px;justify-content:center;padding:4px 10px;border-radius:8px;font-weight:600;cursor:pointer;border:0;font-family:var(--mono)}
+.mcell.zero{color:var(--muted);background:transparent;font-weight:400;cursor:default}
+.mcell.High{background:var(--high-soft);color:var(--high)} .mcell.Medium{background:var(--med-soft);color:var(--med)} .mcell.Low{background:var(--low-soft);color:var(--low)}
+
+/* bar */
+.bar{position:relative;height:14px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);overflow:visible;margin:14px 0 30px}
+.bar .fill{height:100%;border-radius:999px;background:var(--accent)}
+.bar .mark{position:absolute;top:-6px;bottom:-6px;width:2px;background:var(--ink)}
+.bar .mark span{position:absolute;top:24px;left:50%;transform:translateX(-50%);font-size:13px;color:var(--muted);white-space:nowrap}
+
+/* upload */
+.drop{border:2px dashed var(--line);border-radius:var(--r);padding:34px 24px;text-align:center;background:var(--surface-2);cursor:pointer;transition:border-color .15s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{font-size:19px;display:block;margin-bottom:4px}
+.files{display:grid;gap:12px}
+.fileitem{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:14px 16px;border:1px solid var(--line);border-radius:12px;flex-wrap:wrap}
+.fileitem.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.sheets{display:flex;gap:6px;flex-wrap:wrap}
+.maprow{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+
+/* data grid */
+.gridwrap{overflow:auto;max-height:620px;border:1px solid var(--line);border-radius:12px}
+.dg{font-size:15px;min-width:100%}
+.dg th,.dg td{padding:7px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);white-space:nowrap;text-align:left}
+.dg thead th{position:sticky;top:0;background:var(--surface-2);z-index:1;font-weight:600;font-size:14px}
+.dg thead th .cl{display:block;font-family:var(--mono);font-weight:400;color:var(--muted);font-size:12px}
+.dg td.rn,.dg th.rn{font-family:var(--mono);color:var(--muted);text-align:right;background:var(--surface-2);position:sticky;left:0}
+.dg td.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.dg tr.hit td{background:var(--accent-soft)}
+.dg tr.hit td.rn{color:var(--accent-ink);font-weight:600;box-shadow:inset 4px 0 0 var(--accent)}
+.dg td.hitcell{outline:2px solid var(--accent);outline-offset:-2px;font-weight:600;color:var(--accent-ink)}
+.dg tr.focus td{animation:pulse 1.6s ease 1}
+@keyframes pulse{0%{background:color-mix(in srgb,var(--accent) 35%,transparent)}100%{background:var(--accent-soft)}}
+
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,12,14,.38);z-index:40;display:none}
+.scrim.open{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(820px,100%);background:var(--bg);z-index:41;overflow:auto;transform:translateX(100%);transition:transform .2s ease;border-left:1px solid var(--line)}
+.drawer.open{transform:none}
+.drawer-in{padding:22px 26px 60px;display:flex;flex-direction:column;gap:16px}
+.dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.dhead h2{font-size:25px}
+dl.kv{display:grid;grid-template-columns:150px 1fr;gap:8px 16px;margin:0}
+dl.kv dt{color:var(--muted);font-size:15px}
+dl.kv dd{margin:0}
+@media (max-width:560px){dl.kv{grid-template-columns:1fr} dl.kv dt{margin-top:6px}}
+.std{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.std-h{padding:12px 16px;background:var(--surface-2);display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap}
+.std-h b{font-family:var(--mono);font-weight:600}
+.std-h span{color:var(--muted);font-size:15px}
+.para{display:grid;grid-template-columns:78px 1fr;gap:12px;padding:10px 16px;border-top:1px solid var(--line);font-size:16px;color:var(--muted)}
+.para .pn{font-family:var(--mono);font-size:14px;padding-top:2px}
+.para.hit{background:var(--accent-soft);color:var(--ink);box-shadow:inset 5px 0 0 var(--accent)}
+.para.hit .pn{color:var(--accent-ink);font-weight:600}
+.para .tag{display:inline-block;margin-left:8px;font-size:12.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.04em}
+.callout{background:var(--surface-2);border-radius:12px;padding:14px 16px;font-size:16px}
+.note{font-size:14px;color:var(--muted)}
+.lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:16px}
+@media (max-width:600px){.lib{grid-template-columns:1fr}}
+
+/* modal + toast */
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:60;background:rgba(10,12,14,.38);padding:16px}
+.modal.open{display:flex}
+.modal .card{width:min(640px,100%);max-height:90vh;overflow:auto}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:12px 20px;border-radius:12px;z-index:80;font-size:16px;display:none;max-width:min(560px,92vw)}
+.toast.show{display:block}
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.sample-banner{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);color:var(--ink);border-radius:var(--r);padding:12px 18px;font-size:16px}
+.list-plain{margin:0;padding-left:20px}
+.list-plain li{margin:4px 0}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:600px){main{padding:16px 16px 60px}.top-in{padding:12px 16px}.card{padding:18px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><b>SSA Audit Tracker</b><span id="engLine">—</span></div>
+    <nav id="nav">
+      <a href="#overview" data-v="overview">Overview</a>
+      <a href="#issues" data-v="issues">Issues</a>
+      <a href="#files" data-v="files">Files &amp; testing</a>
+      <a href="#references" data-v="references">SSA / SFRS(I) library</a>
+    </nav>
+  </div>
+</header>
+<main id="main"></main>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Issue detail"></aside>
+<div class="modal" id="modal"></div>
+<div class="toast" id="toast" role="status"></div>
+<input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls,.csv" multiple hidden>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+"use strict";
+/* ============================================================
+   Reference library. Paragraph text is paraphrased for quick
+   orientation; always read the official SSA / SFRS(I) text.
+   ============================================================ */
+const LIB = {
+ "SSA 200":{kind:"SSA",title:"Overall Objectives of the Independent Auditor and the Conduct of an Audit in Accordance with SSAs",paras:[
+  ["15","Plan and perform the audit with professional scepticism, recognising that circumstances may exist that cause the financial statements to be materially misstated."],
+  ["17","Obtain sufficient appropriate audit evidence to reduce audit risk to an acceptably low level, so reasonable conclusions can be drawn to support the opinion."]]},
+ "SSA 230":{kind:"SSA",title:"Audit Documentation",paras:[
+  ["8","Prepare documentation that lets an experienced auditor with no prior connection to the audit understand the procedures performed, the evidence obtained and significant matters and judgements."],
+  ["9","When documenting procedures, record the identifying characteristics of the specific items or matters tested."]]},
+ "SSA 240":{kind:"SSA",title:"The Auditor's Responsibilities Relating to Fraud in an Audit of Financial Statements",paras:[
+  ["12","Maintain professional scepticism throughout the audit, recognising that fraud could exist despite past experience of management's honesty and integrity."],
+  ["26","Presume there are risks of fraud in revenue recognition, and evaluate which types of revenue, transactions or assertions give rise to those risks."],
+  ["31","Treat management override of controls as a risk of material misstatement due to fraud, and therefore a significant risk, in every audit."],
+  ["32(a)","Design and perform procedures to test the appropriateness of journal entries recorded in the general ledger and other adjustments made in preparing the financial statements."],
+  ["32(a)(ii)","Select journal entries and other adjustments made at the end of the reporting period."],
+  ["32(a)(iii)","Consider the need to test journal entries and other adjustments throughout the period."],
+  ["32(b)","Review accounting estimates for bias and evaluate whether the circumstances producing the bias represent a risk of material misstatement due to fraud."],
+  ["32(c)","For significant transactions outside the normal course of business, evaluate whether the business rationale suggests they were entered into for fraudulent financial reporting or to conceal misappropriation."],
+  ["A42–A43","Characteristics of fraudulent journal entries include: entries to unrelated, unusual or seldom-used accounts; entries by people who do not usually post journals; entries at period end or post-closing with little or no explanation; entries without account numbers; and entries with round or consistent ending numbers."]]},
+ "SSA 315":{kind:"SSA",title:"Identifying and Assessing the Risks of Material Misstatement (Revised 2019)",paras:[
+  ["28","Identify the risks of material misstatement and determine whether they exist at the financial statement level or the assertion level."],
+  ["31","For risks at the assertion level, assess inherent risk by considering the likelihood and magnitude of misstatement."],
+  ["32","Determine whether any of the assessed risks of material misstatement are significant risks."]]},
+ "SSA 320":{kind:"SSA",title:"Materiality in Planning and Performing an Audit",paras:[
+  ["10","Determine materiality for the financial statements as a whole when establishing the overall audit strategy."],
+  ["11","Determine performance materiality for assessing risks and setting the nature, timing and extent of further audit procedures."],
+  ["12","Revise materiality if information becomes available during the audit that would have led to a different amount initially."]]},
+ "SSA 330":{kind:"SSA",title:"The Auditor's Responses to Assessed Risks",paras:[
+  ["18","Irrespective of assessed risks, design and perform substantive procedures for each material class of transactions, account balance and disclosure."],
+  ["20(a)","Agree or reconcile the information in the financial statements with the underlying accounting records."],
+  ["20(b)","Examine material journal entries and other adjustments made in the course of preparing the financial statements."],
+  ["21","Where a risk is assessed as significant, perform substantive procedures that respond specifically to that risk."]]},
+ "SSA 450":{kind:"SSA",title:"Evaluation of Misstatements Identified during the Audit",paras:[
+  ["5","Accumulate misstatements identified during the audit, other than those that are clearly trivial."],
+  ["8","Communicate all accumulated misstatements on a timely basis to the appropriate level of management and request that they be corrected."],
+  ["11","Determine whether uncorrected misstatements are material, individually or in aggregate."]]},
+ "SSA 500":{kind:"SSA",title:"Audit Evidence",paras:[
+  ["6","Design and perform audit procedures that are appropriate for obtaining sufficient appropriate audit evidence."],
+  ["7","Consider the relevance and reliability of the information to be used as audit evidence."],
+  ["9","When using information produced by the entity, evaluate whether it is sufficiently reliable, including obtaining evidence about its accuracy and completeness."],
+  ["10","Determine means of selecting items for testing that are effective in meeting the purpose of the procedure (all items, specific items, or audit sampling)."],
+  ["11","If evidence from different sources is inconsistent, or its reliability is in doubt, determine what changes or additions to procedures are needed."]]},
+ "SSA 501":{kind:"SSA",title:"Audit Evidence — Specific Considerations for Selected Items",paras:[
+  ["4","Where inventory is material, attend the physical inventory count (unless impracticable) and perform procedures on the final inventory records."]]},
+ "SSA 520":{kind:"SSA",title:"Analytical Procedures",paras:[
+  ["5","For substantive analytical procedures, assess suitability for the assertions, the reliability of the data, and develop an expectation precise enough to identify misstatement."],
+  ["7","Investigate fluctuations or relationships that are inconsistent with other information or differ significantly from expected values."]]},
+ "SSA 530":{kind:"SSA",title:"Audit Sampling",paras:[
+  ["7","Determine a sample size sufficient to reduce sampling risk to an acceptably low level."],
+  ["9","Perform audit procedures appropriate to the purpose on each item selected."]]},
+ "SSA 540":{kind:"SSA",title:"Auditing Accounting Estimates and Related Disclosures (Revised)",paras:[
+  ["16","Assess inherent risk for accounting estimates, taking into account estimation uncertainty, complexity and subjectivity."],
+  ["32","Evaluate whether judgements and decisions made by management in making estimates indicate possible management bias."]]},
+ "SSA 550":{kind:"SSA",title:"Related Parties",paras:[
+  ["15","Remain alert, when inspecting records or documents, for arrangements or information that may indicate related party relationships or transactions not previously identified."],
+  ["23","For significant related party transactions outside the normal course of business, inspect the underlying agreements and evaluate the business rationale."],
+  ["25","Evaluate whether identified related party relationships and transactions have been appropriately accounted for and disclosed."]]},
+ "SSA 560":{kind:"SSA",title:"Subsequent Events",paras:[
+  ["6","Perform procedures to obtain evidence that all events between the date of the financial statements and the auditor's report that need adjustment or disclosure have been identified."]]},
+ "SFRS(I) 1-1":{kind:"SFRS(I)",title:"Presentation of Financial Statements",paras:[
+  ["15","Financial statements shall present fairly the financial position, financial performance and cash flows of the entity."],
+  ["29","Present each material class of similar items separately; present items of a dissimilar nature or function separately unless immaterial."],
+  ["32","Do not offset assets and liabilities, or income and expenses, unless required or permitted by an SFRS(I)."]]},
+ "SFRS(I) 1-2":{kind:"SFRS(I)",title:"Inventories",paras:[
+  ["9","Inventories are measured at the lower of cost and net realisable value."]]},
+ "SFRS(I) 1-8":{kind:"SFRS(I)",title:"Accounting Policies, Changes in Accounting Estimates and Errors",paras:[
+  ["41","Financial statements do not comply with SFRS(I) if they contain material errors, or immaterial errors made intentionally to achieve a particular presentation."],
+  ["42","Correct material prior period errors retrospectively in the first set of financial statements authorised after their discovery."]]},
+ "SFRS(I) 1-10":{kind:"SFRS(I)",title:"Events after the Reporting Period",paras:[
+  ["8","Adjust the amounts recognised to reflect adjusting events after the reporting period."],
+  ["21","Disclose the nature and financial effect of material non-adjusting events after the reporting period."]]},
+ "SFRS(I) 1-24":{kind:"SFRS(I)",title:"Related Party Disclosures",paras:[
+  ["18","Where there have been related party transactions, disclose the nature of the relationship and information about the transactions and outstanding balances, including commitments."]]},
+ "SFRS(I) 1-37":{kind:"SFRS(I)",title:"Provisions, Contingent Liabilities and Contingent Assets",paras:[
+  ["14","Recognise a provision only when there is a present obligation from a past event, an outflow of resources is probable, and a reliable estimate can be made."],
+  ["36","The amount recognised is the best estimate of the expenditure required to settle the present obligation at the end of the reporting period."]]},
+ "SFRS(I) 9":{kind:"SFRS(I)",title:"Financial Instruments",paras:[
+  ["5.5.1","Recognise a loss allowance for expected credit losses on financial assets measured at amortised cost and other specified items."]]},
+ "SFRS(I) 15":{kind:"SFRS(I)",title:"Revenue from Contracts with Customers",paras:[
+  ["9","A contract with a customer is accounted for only when specified criteria are met, including approval, identifiable rights, payment terms, commercial substance and probable collection."],
+  ["31","Recognise revenue when (or as) a performance obligation is satisfied by transferring control of a promised good or service to the customer."],
+  ["38","Indicators of transfer of control at a point in time include a present right to payment, legal title, physical possession, transfer of risks and rewards, and customer acceptance."]]}
+};
+
+const CATS = ["Fraud risk","Accuracy & valuation","Cut-off","Existence & occurrence","Completeness","Presentation & disclosure","Data integrity"];
+const STATUSES = ["Open","Investigating","Misstatement confirmed","Cleared"];
+const RISKS = ["High","Medium","Low"];
+
+const TESTS = {
+ tb_balance:{title:"Debits and credits do not agree",cat:"Accuracy & valuation",w:3,
+  refs:[["SSA 330",["20(a)"]],["SSA 500",["9"]],["SFRS(I) 1-1",["15"]]],
+  why:"Total debits and total credits on this sheet differ. The financial statements may not reconcile to the underlying accounting records.",
+  proc:"Re-foot the sheet, agree it to the general ledger, and trace the difference to the account(s) causing it. Ask management for a corrected trial balance."},
+ je_unbalanced:{title:"Unbalanced journal entries",cat:"Data integrity",w:3,
+  refs:[["SSA 330",["20(b)"]],["SSA 500",["9"]],["SSA 240",["32(a)"]]],
+  why:"Debits and credits within these journals do not net to zero. This points to an extract problem, a keying error or a failed posting control.",
+  proc:"Obtain the journals directly from the system, compare them to this extract, and confirm whether the debits-equal-credits control is operating."},
+ large_items:{title:"Individually significant entries (≥ performance materiality)",cat:"Accuracy & valuation",w:2,
+  refs:[["SSA 320",["11"]],["SSA 500",["10"]],["SSA 330",["18"]]],
+  why:"Each of these entries is at or above performance materiality, so a misstatement in any one could be material on its own.",
+  proc:"Select all of these as key items. Vouch each to supporting documents (contract, invoice, delivery or approval) and check the account classification."},
+ round_amounts:{title:"Round-sum entries",cat:"Fraud risk",w:3,
+  refs:[["SSA 240",["32(a)","A42–A43"]],["SSA 200",["15"]]],
+  why:"Entries in exact thousands above the clearly trivial threshold are a recognised characteristic of fraudulent or estimated postings.",
+  proc:"Obtain support and approval for each entry. Ask who prepared it and why the amount is estimated rather than invoiced."},
+ weekend:{title:"Entries dated on weekends",cat:"Fraud risk",w:3,
+  refs:[["SSA 240",["32(a)(iii)","A42–A43"]]],
+  why:"Postings dated outside normal working days fall outside the usual control environment and need a business reason.",
+  proc:"Confirm the business reason and the approver. Check system timestamps against the document date."},
+ period_end:{title:"Significant entries in the last 5 days of the period",cat:"Cut-off",w:2,
+  refs:[["SSA 240",["32(a)(ii)"]],["SSA 330",["20(b)"]]],
+  why:"Entries close to the reporting date carry a higher risk of cut-off error and of management adjusting results.",
+  proc:"Vouch each entry to documents dated on or before the reporting date. Check for reversals in the following period."},
+ post_ye:{title:"Entries dated after the reporting date",cat:"Cut-off",w:2,
+  refs:[["SSA 560",["6"]],["SFRS(I) 1-10",["8","21"]],["SSA 240",["32(a)(ii)"]]],
+  why:"Transactions after the reporting date may relate to the audited period (adjusting events) or need disclosure.",
+  proc:"Decide whether each entry is an adjusting or non-adjusting event. Credit notes and reversals after year end often signal overstated revenue."},
+ revenue_cutoff:{title:"Revenue entries around the reporting date",cat:"Cut-off",w:3,
+  refs:[["SSA 240",["26"]],["SSA 330",["21"]],["SFRS(I) 15",["31","38"]]],
+  why:"Revenue recognition is a presumed fraud risk. Entries within 7 days either side of year end test whether control passed in the right period.",
+  proc:"Trace each entry to delivery orders and customer acceptance. Confirm control transferred on or before the reporting date."},
+ duplicates:{title:"Possible duplicate entries",cat:"Existence & occurrence",w:2,
+  refs:[["SSA 500",["7","9"]],["SSA 330",["18"]]],
+  why:"Lines with the same date, account, amount and description may have been posted twice, overstating the balance.",
+  proc:"Compare the source documents for each pair. If duplicated, record the excess as a misstatement under SSA 450."},
+ missing_info:{title:"Entries with no description or reference",cat:"Data integrity",w:1,
+  refs:[["SSA 240",["A42–A43"]],["SSA 500",["9"]],["SSA 230",["9"]]],
+  why:"Entries with no explanation are harder to audit and are a known characteristic of inappropriate journals.",
+  proc:"Ask the preparer for the supporting document and business purpose. Consider whether the extract is complete."},
+ keywords:{title:"Manual adjustments, suspense and write-offs",cat:"Fraud risk",w:3,
+  refs:[["SSA 240",["31","32(a)","A42–A43"]]],
+  why:"Wording such as manual adjustment, suspense, reversal or write-off indicates non-routine entries where management override is most likely.",
+  proc:"Obtain approval evidence and support for each entry. Clear suspense balances to their correct accounts before year end."},
+ related_party:{title:"Possible related party transactions",cat:"Presentation & disclosure",w:2,
+  refs:[["SSA 550",["15","23","25"]],["SFRS(I) 1-24",["18"]]],
+  why:"These entries mention directors, shareholders or group entities, which suggests related party balances that need disclosure.",
+  proc:"Agree to the related party listing and board minutes, inspect agreements, and check the disclosure under SFRS(I) 1-24."},
+ estimates:{title:"Accounting estimates and provisions",cat:"Accuracy & valuation",w:2,
+  refs:[["SSA 540",["16","32"]],["SSA 240",["32(b)"]],["SFRS(I) 1-37",["14","36"]],["SFRS(I) 9",["5.5.1"]]],
+  why:"Provisions, allowances and accruals rely on management judgement and are open to bias.",
+  proc:"Test management's method, data and assumptions. Do a retrospective review of last year's estimate against actual outcomes."},
+ rare_users:{title:"Entries by users who rarely post",cat:"Fraud risk",w:3,
+  refs:[["SSA 240",["32(a)","A42–A43"]]],
+  why:"Postings by people who do not normally make journal entries (for example senior management) are a classic override indicator.",
+  proc:"Confirm each user's posting rights, obtain approval evidence, and inspect the support for every entry."},
+ seq_gaps:{title:"Gaps in journal or document numbering",cat:"Completeness",w:1,
+  refs:[["SSA 500",["9"]],["SSA 330",["18"]]],
+  why:"Missing numbers can mean deleted, voided or omitted entries, so the population may be incomplete.",
+  proc:"Obtain explanations and system evidence for each missing number (for example a void log)."},
+ benford:{title:"First-digit pattern departs from Benford's law",cat:"Fraud risk",w:2,
+  refs:[["SSA 520",["5","7"]],["SSA 240",["12"]]],
+  why:"The leading-digit distribution differs from what naturally occurring amounts show, so some values may be invented or manipulated.",
+  proc:"Focus on the over-represented leading digit, look for amounts just under approval limits, and vouch a sample."},
+ sign_anomaly:{title:"Balances with an unexpected sign",cat:"Presentation & disclosure",w:2,
+  refs:[["SFRS(I) 1-1",["32","29"]],["SFRS(I) 1-2",["9"]],["SSA 501",["4"]],["SSA 520",["7"]]],
+  why:"Credit balances on asset accounts (or debit balances on liabilities) suggest errors, or items that need reclassifying rather than offsetting.",
+  proc:"Investigate the cause. Reclassify overdrafts and customer credit balances to liabilities. Negative inventory points to costing or count errors."},
+ cell_errors:{title:"Formula errors in the workbook",cat:"Data integrity",w:2,
+  refs:[["SSA 500",["9"]],["SSA 230",["8"]]],
+  why:"Cells showing #REF!, #DIV/0! or similar errors mean the schedule cannot be relied on as presented.",
+  proc:"Ask for a corrected schedule and re-perform the affected calculations."},
+ manual:{title:"Manual issue",cat:"Accuracy & valuation",w:2,refs:[],why:"",proc:""}
+};
+
+/* ===================== helpers ===================== */
+const pad = n => String(n).padStart(2,"0");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Math.random().toString(36).slice(2,9);
+function num(v){
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v === "boolean") return null;
+  let s = String(v).trim(); if (!s) return null;
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1,-1); }
+  s = s.replace(/[,\s]|S\$|SGD|\$/gi,"");
+  if (/-$/.test(s)) { neg = true; s = s.slice(0,-1); }
+  if (!/^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test(s)) return null;
+  const n = parseFloat(s); return isFinite(n) ? (neg ? -n : n) : null;
+}
+function toDate(v){
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number" && v > 20000 && v < 80000) return new Date(Date.UTC(1899,11,30) + Math.round(v)*864e5);
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);           // Singapore convention: d/m/y
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; return new Date(Date.UTC(y, +m[2]-1, +m[1])); }
+  m = s.match(/^(\d{1,2})[ -]([A-Za-z]{3,})[ -,]*(\d{2,4})$/);
+  if (m) { const mo = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(m[2].slice(0,3).toLowerCase())/3; let y=+m[3]; if (y<100) y+=2000; if (mo>=0) return new Date(Date.UTC(y,mo,+m[1])); }
+  return null;
+}
+const isoD = d => d ? d.toISOString().slice(0,10) : "";
+const str = v => (v === null || v === undefined) ? "" : String(v).trim();
+const colLetter = i => { let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=Math.floor((i-1)/26);} return s; };
+
+/* ===================== state ===================== */
+const LS_KEY = "ssa-audit-tracker.v1";
+function defaults(){
+  return { settings:{entity:"",fyEnd:"2026-06-30",currency:"SGD",om:250000,pmPct:75,ctPct:5},
+           files:[], issues:[], seq:1, sample:false,
+           ui:{fileId:null,sheet:null,flaggedOnly:false,filters:{q:"",risk:"",cat:"",status:"active",prio:""},sort:"score"} };
+}
+let state;
+function load(){ try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
+let storageWarned = false;
+function save(){
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  catch(e){
+    if (!storageWarned){ toast("Browser storage is full or unavailable. Issues stay on screen, but large uploaded sheets may not survive a reload."); storageWarned = true; }
+    try { const lite = JSON.parse(JSON.stringify(state)); lite.files.forEach(f=>f.sheets.forEach(s=>{ s.rows = s.rows.slice(0,2000); s.rowNums = s.rowNums.slice(0,2000); s.truncated = true; })); localStorage.setItem(LS_KEY, JSON.stringify(lite)); } catch(_){}
+  }
+}
+const S = () => state.settings;
+const PM = () => S().om * S().pmPct/100;
+const CT = () => S().om * S().ctPct/100;
+const fmt = (n, dp=0) => (n===null||n===undefined||isNaN(n)) ? "—" : Number(n).toLocaleString("en-SG",{minimumFractionDigits:dp,maximumFractionDigits:dp});
+const money = n => `${S().currency} ${fmt(n)}`;
+
+/* ===================== column detection ===================== */
+const FIELDS = [
+ ["user",/posted by|prepared by|created by|entered by|preparer|\buser/i],
+ ["date",/date|posting|period end/i],
+ ["ref",/^(je|jnl|journal|voucher|doc|document|entry|txn|transaction|invoice)\b|\bref(erence)?\b|\bno\.?$/i],
+ ["debit",/debit|^dr\b/i],
+ ["credit",/credit|^cr\b/i],
+ ["name",/(account|a\/c|gl|ledger)\s*(name|title|description)/i],
+ ["account",/account|a\/c|\bgl\b|ledger|code/i],
+ ["desc",/desc|narrat|memo|particular|detail|remark|text|explanation/i],
+ ["amount",/amount|amt|balance|value|\bnet\b|sgd/i]
+];
+const FIELD_LABEL = {date:"Date",ref:"Reference / JE no.",account:"Account code",name:"Account name",desc:"Description",debit:"Debit",credit:"Credit",amount:"Amount (signed)",user:"Posted by"};
+function detectHeader(aoa){
+  let best = 0, bestScore = -Infinity;
+  for (let r = 0; r < Math.min(15, aoa.length); r++){
+    const row = aoa[r] || [];
+    const texts = row.filter(v => typeof v === "string" && v.trim());
+    if (texts.length < 2) continue;
+    const kw = texts.filter(t => FIELDS.some(([,rx]) => rx.test(t))).length;
+    const nums = row.filter(v => typeof v === "number").length;
+    const score = kw*3 + texts.length - nums*2;
+    if (score > bestScore){ best = r; bestScore = score; }
+  }
+  return best;
+}
+function detectMap(header){
+  const map = {}; Object.keys(FIELD_LABEL).forEach(k => map[k] = -1);
+  header.forEach((h,i) => {
+    const t = str(h); if (!t) return;
+    for (const [f,rx] of FIELDS){ if (map[f] === -1 && rx.test(t)){ map[f] = i; break; } }
+  });
+  return map;
+}
+
+/* ===================== parse uploads ===================== */
+function normCell(v){
+  if (v instanceof Date){
+    let d = v; if (d.getHours() === 23 && d.getMinutes() >= 50) d = new Date(d.getTime() + 3600e3);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+  if (typeof v === "number" || typeof v === "string") return v;
+  if (v === null || v === undefined) return null;
+  return String(v);
+}
+function parseWorkbook(buf, name){
+  const wb = XLSX.read(buf, {type:"array", cellDates:true});
+  const file = {id:uid(), name, uploadedAt:new Date().toISOString(), sheets:[]};
+  for (const sn of wb.SheetNames){
+    const ws = wb.Sheets[sn]; if (!ws || !ws["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    const errors = [];
+    for (const k in ws){
+      if (k[0] === "!") continue;
+      const c = ws[k];
+      if (c && c.t === "e"){ const a = XLSX.utils.decode_cell(k); errors.push({addr:k, row:a.r+1, col:a.c - range.s.c, val:c.w || "#ERROR"}); }
+    }
+    const aoa = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null, blankrows:true}).map(r => r.map(normCell));
+    if (!aoa.length) continue;
+    const hr = detectHeader(aoa);
+    const width = Math.max(...aoa.slice(0,200).map(r => r.length), 1);
+    const header = Array.from({length:width}, (_,i) => str((aoa[hr]||[])[i]) || colLetter(range.s.c+i));
+    const rows = [], rowNums = [];
+    errors.forEach(e => { /* make the error visible in the grid */
+      const ri = e.row - 1 - range.s.r; if (aoa[ri]) aoa[ri][e.col] = e.val; });
+    for (let r = hr+1; r < aoa.length; r++){
+      const row = aoa[r]; if (!row || row.every(v => v === null || v === "")) continue;
+      rows.push(row); rowNums.push(range.s.r + r + 1);
+    }
+    let truncated = false;
+    if (rows.length > 20000){ rows.length = 20000; rowNums.length = 20000; truncated = true; }
+    file.sheets.push({name:sn, headerRow:range.s.r+hr+1, header, colStart:range.s.c, rows, rowNums, map:detectMap(header), errors, truncated});
+  }
+  return file;
+}
+
+/* ===================== tests ===================== */
+const RX_TOTAL = /^(grand\s+)?total|^sub-?total/i;
+const RX_KEY = /\b(suspense|plug|manual|adj(ustment)?s?|reversal|reverse|write[- ]?offs?|override|misc(ellaneous)?|clearing|correction|top[- ]?side|unidentified)\b/i;
+const RX_RP = /\b(director|shareholder|related part(y|ies)|holding co|parent co|subsidiar(y|ies)|associate|inter-?co(mpany)?|key management)\b/i;
+const RX_EST = /\b(provision|allowance|impairment|doubtful|ecl|expected credit|accru(al|als|ed)|estimate|warranty)\b/i;
+const RX_REV = /\b(revenue|sales|turnover)\b/i;
+const BENFORD = [0, .301,.176,.125,.097,.079,.067,.058,.051,.046];
+
+function rowsInfo(sh){
+  const m = sh.map, out = [];
+  sh.rows.forEach((r,i) => {
+    const g = k => m[k] >= 0 ? r[m[k]] : null;
+    const dr = num(g("debit")), cr = num(g("credit"));
+    let amt = m.amount >= 0 ? num(g("amount")) : null;
+    if (amt === null && (m.debit >= 0 || m.credit >= 0) && (dr !== null || cr !== null)) amt = (dr||0) - (cr||0);
+    const name = str(g("name")), desc = str(g("desc")), acct = str(g("account"));
+    const isTotal = r.some(v => typeof v === "string" && RX_TOTAL.test(v.trim()));
+    out.push({i, n:sh.rowNums[i], amt, dr, cr, date:toDate(g("date")), acct, name, desc, ref:str(g("ref")), user:str(g("user")), text:(name+" "+desc).trim(), isTotal});
+  });
+  return out;
+}
+function sideAmount(rows){ let p=0, n=0; rows.forEach(r => { if (r.amt > 0) p += r.amt; else if (r.amt < 0) n -= r.amt; }); return Math.max(p,n); }
+
+function runTests(file, sh){
+  const m = sh.map, info = rowsInfo(sh).filter(r => !r.isTotal);
+  const amtCols = [m.amount, m.debit, m.credit].filter(x => x >= 0);
+  const hasAmt = amtCols.length > 0, hasDate = m.date >= 0, hasDrCr = m.debit >= 0 && m.credit >= 0;
+  const fy = toDate(S().fyEnd), pm = PM(), ct = CT();
+  const res = [];
+  const add = (testId, rows, opts={}) => {
+    if (!rows.length && !opts.force) return;
+    res.push({testId, rows:rows.map(r => r.n), amount: opts.amount ?? sideAmount(rows), count: opts.count ?? rows.length, detail: opts.detail || "", cols: opts.cols || amtCols});
+  };
+  const withAmt = info.filter(r => r.amt !== null && r.amt !== 0);
+
+  if (hasDrCr){
+    const tdr = info.reduce((s,r) => s + (r.dr||0), 0), tcr = info.reduce((s,r) => s + (r.cr||0), 0);
+    const diff = Math.round((tdr - tcr)*100)/100;
+    if (Math.abs(diff) >= 0.5) add("tb_balance", [], {force:true, amount:Math.abs(diff), count:0, cols:[m.debit,m.credit],
+      detail:`Total debits ${fmt(tdr,2)} vs total credits ${fmt(tcr,2)}; difference ${fmt(diff,2)}.`});
+    if (m.ref >= 0){
+      const g = {};
+      info.forEach(r => { if (!r.ref) return; (g[r.ref] = g[r.ref] || []).push(r); });
+      const bad = Object.entries(g).filter(([,rs]) => Math.abs(rs.reduce((s,r)=>s+(r.amt||0),0)) >= 0.5);
+      if (bad.length) add("je_unbalanced", bad.flatMap(([,rs]) => rs), {
+        amount: bad.reduce((s,[,rs]) => s + Math.abs(rs.reduce((t,r)=>t+(r.amt||0),0)), 0), count: bad.length,
+        detail: bad.slice(0,12).map(([k,rs]) => `${k}: out by ${fmt(rs.reduce((t,r)=>t+(r.amt||0),0),2)}`).join("; "),
+        cols:[m.ref, ...amtCols]});
+    }
+  }
+  if (hasAmt && hasDate){
+    add("large_items", withAmt.filter(r => Math.abs(r.amt) >= pm), {detail:`Threshold: performance materiality ${money(pm)}.`});
+    add("round_amounts", withAmt.filter(r => Math.abs(r.amt) >= ct && Math.abs(r.amt) % 1000 === 0), {detail:`Exact thousands at or above clearly trivial (${money(ct)}).`});
+    add("weekend", withAmt.filter(r => r.date && [0,6].includes(r.date.getUTCDay())), {cols:[m.date, ...amtCols], detail:"Dated Saturday or Sunday."});
+    if (fy){
+      const pe = withAmt.filter(r => r.date && r.date <= fy && (fy - r.date) <= 4*864e5 && Math.abs(r.amt) >= ct);
+      add("period_end", pe, {cols:[m.date, ...amtCols], detail:`Dated ${isoD(new Date(fy-4*864e5))} to ${isoD(fy)}, at or above ${money(ct)}.`});
+      add("post_ye", withAmt.filter(r => r.date && r.date > fy), {cols:[m.date, ...amtCols], detail:`Dated after the reporting date of ${isoD(fy)}.`});
+      const rev = withAmt.filter(r => r.date && Math.abs(r.date - fy) <= 7*864e5 && (RX_REV.test(r.name) || /^4\d{3}$/.test(r.acct)));
+      add("revenue_cutoff", rev, {cols:[m.date, m.account, m.name, ...amtCols].filter(x=>x>=0), detail:`Revenue-account lines dated within 7 days of ${isoD(fy)}.`});
+    }
+    const keyMap = {};
+    withAmt.forEach(r => { const k = [isoD(r.date), r.acct, r.amt.toFixed(2), r.desc.toLowerCase()].join("|"); (keyMap[k] = keyMap[k] || []).push(r); });
+    const dupGroups = Object.values(keyMap).filter(g => g.length > 1);
+    if (dupGroups.length) add("duplicates", dupGroups.flat(), {amount: sideAmount(dupGroups.flatMap(g => g.slice(1))), count: dupGroups.length,
+      detail:`${dupGroups.length} group(s) share date, account, amount and description. Amount shown is the potential overstatement (extra copies only).`});
+    if (m.user >= 0 && info.length >= 30){
+      const cnt = {}; info.forEach(r => { if (r.user) cnt[r.user] = (cnt[r.user]||0)+1; });
+      const lim = Math.max(2, info.length*0.02);
+      const rare = Object.keys(cnt).filter(u => cnt[u] <= lim);
+      if (rare.length && Object.keys(cnt).length > rare.length) add("rare_users", withAmt.filter(r => rare.includes(r.user)), {cols:[m.user, ...amtCols],
+        detail:`Users with ${Math.floor(lim)} or fewer lines: ${rare.map(u => `${u} (${cnt[u]})`).join(", ")}.`});
+    }
+    if (m.ref >= 0){
+      const nums = [...new Set(info.map(r => { const x = r.ref.match(/(\d+)\s*$/); return x ? +x[1] : null; }).filter(x => x !== null))].sort((a,b)=>a-b);
+      if (nums.length >= 10){
+        const gaps = [];
+        for (let k = 1; k < nums.length; k++){ const d = nums[k]-nums[k-1]; if (d > 1 && d <= 1000) gaps.push([nums[k-1], nums[k]]); }
+        if (gaps.length){
+          const before = new Set(gaps.map(g => g[0]));
+          const rows = info.filter(r => { const x = r.ref.match(/(\d+)\s*$/); return x && before.has(+x[1]); });
+          const missing = gaps.flatMap(([a,b]) => Array.from({length:Math.min(b-a-1,20)}, (_,j) => a+1+j));
+          add("seq_gaps", rows, {amount:0, count:missing.length, cols:[m.ref], detail:`Missing number(s): ${missing.slice(0,40).join(", ")}${missing.length>40?" …":""}. Highlighted rows are the entries immediately before each gap.`});
+        }
+      }
+    }
+    const big = withAmt.filter(r => Math.abs(r.amt) >= 10 && (!hasDrCr || r.amt > 0)); // debit side only, so each journal counts once
+    if (big.length >= 300){ // Benford is unreliable on small populations
+      const c = Array(10).fill(0);
+      big.forEach(r => { const d = +String(Math.abs(r.amt)).replace(/[^1-9]/,"").match(/[1-9]/)[0]; c[d]++; });
+      const obs = c.map(x => x/big.length);
+      const mad = obs.slice(1).reduce((s,o,i) => s + Math.abs(o - BENFORD[i+1]), 0) / 9;
+      if (mad > 0.015){
+        let dmax = 1; for (let d = 2; d <= 9; d++) if (obs[d]-BENFORD[d] > obs[dmax]-BENFORD[dmax]) dmax = d;
+        add("benford", big.filter(r => String(Math.abs(r.amt)).match(/[1-9]/)[0] === String(dmax)), {amount:0,
+          detail:`Mean absolute deviation ${mad.toFixed(4)} (above 0.015 suggests nonconformity). Leading digit ${dmax} appears ${(obs[dmax]*100).toFixed(1)}% vs expected ${(BENFORD[dmax]*100).toFixed(1)}%.`});
+      }
+    }
+  }
+  if (hasAmt){
+    if (m.desc >= 0 || m.ref >= 0){
+      const miss = withAmt.filter(r => (m.desc >= 0 && !r.desc) || (m.ref >= 0 && hasDate && !r.ref));
+      add("missing_info", miss, {cols:[m.desc, m.ref].filter(x=>x>=0)});
+    }
+    add("keywords", withAmt.filter(r => RX_KEY.test(r.text)), {cols:[m.desc, m.name].filter(x=>x>=0)});
+    add("related_party", withAmt.filter(r => RX_RP.test(r.text)), {cols:[m.desc, m.name].filter(x=>x>=0)});
+    add("estimates", withAmt.filter(r => RX_EST.test(r.text) && Math.abs(r.amt) >= ct), {cols:[m.desc, m.name].filter(x=>x>=0)});
+    if (!hasDate){
+      const rules = [
+        [/\b(cash|bank)\b/i, 1, "cash/bank in credit (overdraft shown net?)"],
+        [/inventor|\bstock\b/i, 1, "negative inventory"],
+        [/receivable|debtor/i, 1, "receivables in credit"],
+        [/payable|creditor|accrued|accrual/i, -1, "liabilities in debit"]];
+      const hits = [], notes = [];
+      withAmt.forEach(r => {
+        if (/allowance|provision|accumulated|impairment/i.test(r.text)) return;
+        for (const [rx,sign,label] of rules){ if (rx.test(r.text) && Math.sign(r.amt) === -sign){ hits.push(r); notes.push(`row ${r.n}: ${r.name||r.desc||r.acct} — ${label}`); break; } }
+      });
+      add("sign_anomaly", hits, {amount: hits.reduce((s,r)=>s+Math.abs(r.amt),0), detail: notes.join("; ")});
+    }
+  }
+  if (sh.errors && sh.errors.length){
+    res.push({testId:"cell_errors", rows:[...new Set(sh.errors.map(e => e.row))], amount:0, count:sh.errors.length, cols:[...new Set(sh.errors.map(e => e.col))],
+      detail: sh.errors.slice(0,20).map(e => `${e.addr} ${e.val}`).join(", ")});
+  }
+  return res;
+}
+
+function retest(fileIds){
+  const ids = fileIds || state.files.map(f => f.id);
+  const old = {};
+  state.issues.forEach(i => { if (i.auto) old[i.key] = i; });
+  state.issues = state.issues.filter(i => !i.auto || !ids.includes(i.loc.fileId));
+  for (const f of state.files){
+    if (!ids.includes(f.id)) continue;
+    for (const sh of f.sheets){
+      for (const r of runTests(f, sh)){
+        const key = `${f.id}|${sh.name}|${r.testId}`, prev = old[key], T = TESTS[r.testId];
+        state.issues.push({
+          id: prev ? prev.id : state.seq++, key, auto:true, testId:r.testId, title:T.title, cat:T.cat,
+          amount:r.amount, count:r.count, detail:r.detail,
+          loc:{fileId:f.id, fileName:f.name, sheet:sh.name, rows:r.rows, cols:r.cols.filter(c => c >= 0)},
+          refs: prev && prev.extraRefs ? T.refs.concat(prev.extraRefs) : T.refs.slice(), extraRefs: prev ? prev.extraRefs || [] : [],
+          status: prev ? prev.status : "Open", prio: prev ? prev.prio : "", notes: prev ? prev.notes : "",
+          created: prev ? prev.created : new Date().toISOString(), sample: !!f.sample
+        });
+      }
+    }
+  }
+}
+
+/* ===================== scoring ===================== */
+function score(i){
+  const w = (TESTS[i.testId] || TESTS.manual).w, a = Math.abs(i.amount || 0);
+  const f = a >= S().om ? 3 : a >= PM() ? 2 : a >= CT() ? 1 : 0;
+  return (i.wOverride ?? w) + f;
+}
+const riskOf = i => i.riskOverride || (score(i) >= 5 ? "High" : score(i) >= 3 ? "Medium" : "Low");
+const prioOf = i => i.prio || ({High:"P1",Medium:"P2",Low:"P3"})[riskOf(i)];
+const isActive = i => i.status !== "Cleared";
+const issueNo = i => "AT-" + String(i.id).padStart(3,"0");
+function refLabel(code, p){ return `${code}${p ? (code.startsWith("SFRS") ? " para " : ".") + p : ""}`; }
+
+/* ===================== sample data ===================== */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function buildSample(){
+  const R = mulberry32(20260630), rnd = (a,b) => a + R()*(b-a);
+  const amt = (lo,hi) => Math.round(Math.exp(rnd(Math.log(lo),Math.log(hi)))*100)/100;
+  const A = {bank:["1000","Cash at bank - DBS"],ar:["1100","Trade receivables"],inv:["1200","Inventory - finished goods"],ppe:["1500","Plant and equipment"],
+    susp:["1900","Suspense account"],ap:["2000","Trade payables"],prov:["2200","Provision for warranty"],dir:["2500","Loan from director"],
+    rev:["4000","Sales revenue"],cos:["5000","Cost of sales"],sal:["6100","Salaries and CPF"],rent:["6200","Rent expense"],util:["6300","Utilities"],warr:["6400","Warranty expense"]};
+  const users = ["tan.wl","lim.sk","raj.p"];
+  const DAY = 864e5, start = Date.UTC(2025,6,1), end = Date.UTC(2026,5,25);
+  const iso = t => new Date(t).toISOString().slice(0,10);
+  const tpl = [
+    () => { const a=amt(1800,96000), n="INV-"+(52000+Math.floor(R()*900)); return [[A.ar,`Sales invoice ${n}`,a,0],[A.rev,`Sales invoice ${n}`,0,a]]; },
+    () => { const a=amt(900,68000), n="SI-"+(88000+Math.floor(R()*900)); return [[A.cos,`Supplier invoice ${n}`,a,0],[A.ap,`Supplier invoice ${n}`,0,a]]; },
+    () => { const a=amt(1200,72000); return [[A.ap,"Payment to supplier - GIRO",a,0],[A.bank,"Payment to supplier - GIRO",0,a]]; },
+    () => { const a=amt(1500,88000); return [[A.bank,"Customer receipt - PayNow",a,0],[A.ar,"Customer receipt - PayNow",0,a]]; },
+    () => { const a=amt(41000,62000); return [[A.sal,"Monthly payroll and CPF",a,0],[A.bank,"Monthly payroll and CPF",0,a]]; },
+    () => { const a=amt(1100,9800); return [[A.util,"SP Group utilities",a,0],[A.bank,"SP Group utilities",0,a]]; }
+  ];
+  const planted = new Set([1102,1103,1110,1120,1125,1131,1140,1145,1150,1155,1158]);
+  const gap = new Set([1077,1078]);
+  const nos = []; for (let n = 1001; n <= 1149; n++) if (!planted.has(n) && !gap.has(n)) nos.push(n);
+  const dates = nos.map(() => { let t; do { t = start + Math.floor(R()*((end-start)/DAY))*DAY; } while ([0,6].includes(new Date(t).getUTCDay())); return t; }).sort((a,b)=>a-b);
+  const jmap = {};
+  nos.forEach((n,k) => jmap[n] = {date:dates[k], lines:tpl[Math.floor(R()*tpl.length)](), user:users[Math.floor(R()*users.length)]});
+  const near = n => { for (let k = n-1; k > 1000; k--) if (jmap[k]) return jmap[k].date; return start; };
+  const sat = t => t + ((6 - new Date(t).getUTCDay() + 7) % 7) * DAY;
+  const dupLines = [[A.cos,"Supplier invoice SI-88412 - Ho Seng Trading",27384.50,0],[A.ap,"Supplier invoice SI-88412 - Ho Seng Trading",0,27384.50]];
+  jmap[1102] = {date:near(1102), lines:dupLines, user:"lim.sk"};
+  jmap[1103] = {date:near(1102), lines:dupLines, user:"lim.sk"};
+  jmap[1110] = {date:near(1110), lines:[[A.ppe,"Purchase of CNC machining centre",312450.60,0],[A.ap,"Purchase of CNC machining centre",0,312450.60]], user:"raj.p"};
+  jmap[1120] = {date:near(1120), lines:[[A.rent,"Office rent - March 2026",18400,0],[A.bank,"Office rent - March 2026",0,18040]], user:"tan.wl"};
+  jmap[1125] = {date:sat(near(1125)), lines:[[A.cos,"Inventory write-off - damaged stock",22000,0],[A.inv,"Inventory write-off - damaged stock",0,22000]], user:"lim.sk"};
+  jmap[1131] = {date:near(1131), lines:[[A.bank,null,15276.40,0],[A.ar,null,0,15276.40]], user:"raj.p"};
+  jmap[1140] = {date:near(1140), lines:[[A.susp,"Unidentified payment - parked in suspense",36000,0],[A.bank,"Unidentified payment - parked in suspense",0,36000]], user:"tan.wl"};
+  jmap[1145] = {date:near(1145), lines:[[A.bank,"Advance from director - Mr Tan W L",120000,0],[A.dir,"Advance from director - Mr Tan W L",0,120000]], user:"tan.wl"};
+  const fy = Date.UTC(2026,5,30);
+  [[1150,fy,[[A.ar,"Year-end sales accrual - manual adj",250000,0],[A.rev,"Year-end sales accrual - manual adj",0,250000]],"ceo.office"],
+   [1151,Date.UTC(2026,5,26),tpl[0](),"raj.p"],[1152,Date.UTC(2026,5,29),tpl[1](),"lim.sk"],[1153,Date.UTC(2026,5,29),tpl[3](),"tan.wl"],
+   [1154,Date.UTC(2026,5,30),[[A.ar,"Sales invoice INV-52981",64250.80,0],[A.rev,"Sales invoice INV-52981",0,64250.80]],"raj.p"],
+   [1155,fy,[[A.warr,"Warranty provision top-up FY2026",85000,0],[A.prov,"Warranty provision top-up FY2026",0,85000]],"ceo.office"],
+   [1156,fy,tpl[2](),"tan.wl"],[1157,Date.UTC(2026,6,2),tpl[3](),"raj.p"],
+   [1158,Date.UTC(2026,6,3),[[A.rev,"Credit note CN-2207 - June goods returned",48600,0],[A.ar,"Credit note CN-2207 - June goods returned",0,48600]],"tan.wl"]
+  ].forEach(([n,d,l,u]) => jmap[n] = {date:d, lines:l, user:u});
+  const gl = [];
+  Object.keys(jmap).map(Number).sort((a,b)=>a-b).forEach(n => {
+    const j = jmap[n];
+    j.lines.forEach(([acc,desc,dr,cr]) => gl.push([`JE-${n}`, iso(j.date), acc[0], acc[1], desc, dr || null, cr || null, j.user]));
+  });
+  const glHeader = ["JE No","Date","Account","Account Name","Description","Debit (SGD)","Credit (SGD)","Posted By"];
+  const tbLines = [
+    ["1000","Cash at bank - DBS",842315.40,null],["1010","Cash at bank - OCBC",null,12480.00],
+    ["1100","Trade receivables",1286400.00,null],["1105","Trade receivables - customer credit balances",null,14200.00],
+    ["1150","Allowance for doubtful debts",null,64300.00],["1200","Inventory - finished goods",null,3850.00],
+    ["1210","Inventory - raw materials",418920.75,null],["1500","Plant and equipment",2145600.00,null],
+    ["1510","Accumulated depreciation - plant",null,812340.00],["1900","Suspense account",36000.00,null],
+    ["2000","Trade payables",null,698215.30],["2100","Accrued expenses",null,"#REF!"],
+    ["2200","Provision for warranty",null,185000.00],["2500","Loan from director",null,120000.00],
+    ["3000","Share capital",null,1000000.00],["3100","Retained earnings",null,0],
+    ["4000","Sales revenue",null,6842100.00],["5000","Cost of sales",4215800.00,null],
+    ["6100","Salaries and CPF",1184250.00,null],["6200","Rent expense",220800.00,null],
+    ["6300","Utilities",96420.15,null],["6400","Warranty expense",85000.00,null],["6900","Bad debt expense",22150.00,null]];
+  const sdr = tbLines.reduce((s,r)=>s+(typeof r[2]==="number"?r[2]:0),0), scr = tbLines.reduce((s,r)=>s+(typeof r[3]==="number"?r[3]:0),0);
+  tbLines.find(r => r[0]==="3100")[3] = Math.round((sdr - scr - 2500)*100)/100;
+  const tdr = sdr, tcr = tbLines.reduce((s,r)=>s+(typeof r[3]==="number"?r[3]:0),0);
+  const tbRows = tbLines.concat([["","Total",Math.round(tdr*100)/100,Math.round(tcr*100)/100]]);
+  const tbHeader = ["Account","Account Name","Debit (SGD)","Credit (SGD)"];
+  const errRowIdx = tbRows.findIndex(r => r[0]==="2100");
+  const file = {id:"sample", sample:true, name:"Acme_Precision_FY2026_sample.xlsx", uploadedAt:new Date().toISOString(), sheets:[
+    {name:"General Ledger", headerRow:1, header:glHeader, colStart:0, rows:gl, rowNums:gl.map((_,k)=>k+2), map:detectMap(glHeader), errors:[], truncated:false},
+    {name:"Trial Balance", headerRow:4, header:tbHeader, colStart:0, rows:tbRows, rowNums:tbRows.map((_,k)=>k+5), map:detectMap(tbHeader),
+      errors:[{addr:"D"+(errRowIdx+5), row:errRowIdx+5, col:3, val:"#REF!"}], truncated:false}
+  ]};
+  return file;
+}
+function loadSample(){
+  state.files = state.files.filter(f => !f.sample);
+  state.issues = state.issues.filter(i => !i.sample);
+  state.files.unshift(buildSample());
+  state.sample = true;
+  if (!S().entity) S().entity = "Acme Precision Pte Ltd (sample)";
+  retest(["sample"]);
+  state.ui.fileId = "sample"; state.ui.sheet = "General Ledger";
+}
+
+/* ===================== UI ===================== */
+let view = "overview";
+const $ = (s, r=document) => r.querySelector(s);
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 4200); }
+function route(){
+  const h = (location.hash || "#overview").slice(1);
+  view = ["overview","issues","files","references"].includes(h) ? h : "overview";
+  document.querySelectorAll("#nav a").forEach(a => { if (a.dataset.v === view) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); });
+  render();
+}
+function render(){
+  $("#engLine").textContent = `${S().entity || "Untitled engagement"} · FYE ${S().fyEnd || "not set"} · SFRS(I) / SSA`;
+  const v = {overview:vOverview, issues:vIssues, files:vFiles, references:vRefs}[view];
+  $("#main").innerHTML = (state.sample && state.files.some(f => f.sample) ? sampleBanner() : "") + v();
+  if (view === "files") bindFiles();
+  if (view === "references" && refFocus) { const el = document.getElementById(refFocus); if (el) el.scrollIntoView({block:"center"}); }
+}
+function sampleBanner(){
+  return `<div class="sample-banner"><span><b>Sample data loaded.</b> A fictional general ledger and trial balance are shown so you can see how the tests work. Upload your own Excel file to start.</span>
+  <span class="row"><button class="btn sm" data-act="upload">Upload Excel</button><button class="btn sm ghost" data-act="remove-sample">Remove sample</button></span></div>`;
+}
+function riskChip(r){ return `<span class="chip ${r}"><span class="dot"></span>${r} risk</span>`; }
+function statusChip(s){ const c = s==="Misstatement confirmed" ? "s-confirmed" : s==="Cleared" ? "s-cleared" : ""; return `<span class="chip status ${c}">${esc(s)}</span>`; }
+function rowsText(rows){ if (!rows || !rows.length) return "whole sheet"; const s = rows.slice(0,6).join(", "); return `row${rows.length>1?"s":""} ${s}${rows.length>6?` +${rows.length-6} more`:""}`; }
+function colsText(i){
+  const f = state.files.find(f => f.id === i.loc.fileId); const sh = f && f.sheets.find(s => s.name === i.loc.sheet);
+  if (!sh || !i.loc.cols || !i.loc.cols.length) return "";
+  return i.loc.cols.map(c => `${colLetter((sh.colStart||0)+c)} (${esc(sh.header[c])})`).join(", ");
+}
+function sortedIssues(list){
+  const s = state.ui.sort;
+  return list.slice().sort((a,b) => s === "amount" ? Math.abs(b.amount)-Math.abs(a.amount)
+    : s === "newest" ? b.id - a.id
+    : (score(b)-score(a)) || (Math.abs(b.amount)-Math.abs(a.amount)));
+}
+function issueCard(i){
+  const r = riskOf(i), p = prioOf(i);
+  const refs = i.refs.slice(0,3).map(([c,ps]) => `<span class="chip ref" data-act="ref" data-code="${esc(c)}" data-para="${esc(ps[0]||"")}">${esc(refLabel(c, ps[0]))}</span>`).join("") + (i.refs.length>3?`<span class="chip cat">+${i.refs.length-3}</span>`:"");
+  return `<div class="icard ${i.status==="Cleared"?"cleared":""}" data-risk="${r}" data-act="open" data-id="${i.id}" tabindex="0" role="button" aria-label="Open ${esc(i.title)}">
+    <div class="tophead"><span class="id">${issueNo(i)}</span><span class="row">${riskChip(r)}<span class="chip p">${p}</span></span></div>
+    <div class="t">${esc(i.title)}</div>
+    <div class="amt num">${i.amount ? fmt(i.amount) : "—"}<small>${i.amount ? esc(S().currency) : "no amount"}${i.count ? ` · ${i.count} ${i.testId==="seq_gaps"?"missing":i.testId==="duplicates"||i.testId==="je_unbalanced"?"group(s)":"line(s)"}` : ""}</small></div>
+    <div class="where"><span>📍</span><span><b>${esc(i.loc.fileName || "—")}</b> › ${esc(i.loc.sheet || "—")} · ${esc(rowsText(i.loc.rows))}</span></div>
+    <div class="row">${statusChip(i.status)}<span class="chip cat">${esc(i.cat)}</span></div>
+    <div class="row">${refs}</div>
+  </div>`;
+}
+
+/* ---- Overview ---- */
+function vOverview(){
+  const act = state.issues.filter(isActive);
+  const high = act.filter(i => riskOf(i)==="High");
+  const flagged = act.reduce((s,i)=>s+Math.abs(i.amount||0),0);
+  const conf = state.issues.filter(i => i.status==="Misstatement confirmed").reduce((s,i)=>s+Math.abs(i.amount||0),0);
+  const om = S().om, pm = PM(), ct = CT();
+  const max = Math.max(om*1.25, conf);
+  const queue = sortedIssues(act).slice(0,6);
+  const matrix = CATS.map(c => `<tr><td>${esc(c)}</td>${RISKS.map(r => { const n = act.filter(i => i.cat===c && riskOf(i)===r).length;
+    return `<td class="c">${n ? `<button class="mcell ${r}" data-act="filter" data-cat="${esc(c)}" data-risk="${r}">${n}</button>` : `<span class="mcell zero">0</span>`}</td>`; }).join("")}</tr>`).join("");
+  return `
+  <div class="grid g4">
+    <div class="card stat"><div class="label">Open issues</div><div class="value num">${act.length}</div><div class="sub">${state.issues.length - act.length} cleared</div></div>
+    <div class="card stat accent"><div class="label">High risk · P1</div><div class="value num">${high.length}</div><div class="sub">Need attention first</div></div>
+    <div class="card stat"><div class="label">Amount flagged (open)</div><div class="value num">${fmt(flagged)}</div><div class="sub">${esc(S().currency)} · ${(flagged/om).toFixed(1)}× overall materiality</div></div>
+    <div class="card stat"><div class="label">Confirmed misstatements</div><div class="value num">${fmt(conf)}</div><div class="sub">${conf >= om ? "Exceeds overall materiality" : conf >= pm ? "Above performance materiality" : "Below performance materiality"}</div></div>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-head"><h2>Priority queue</h2><a class="btn sm" href="#issues">All issues</a></div>
+      ${queue.length ? `<div class="issues" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">${queue.map(issueCard).join("")}</div>` : `<div class="empty">No open issues. Upload a file on Files &amp; testing to run the tests.</div>`}
+    </div>
+    <div class="grid" style="align-content:start">
+      <div class="card">
+        <div class="card-head"><h2>Risk by category</h2><p>Open issues</p></div>
+        <div style="overflow-x:auto"><table class="matrix"><thead><tr><th>Category</th>${RISKS.map(r=>`<th class="c" style="text-align:center">${r}</th>`).join("")}</tr></thead><tbody>${matrix}</tbody></table></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>SSA 450 misstatement tracker</h2></div>
+        <div class="muted" style="font-size:15px">Issues set to <b>Misstatement confirmed</b> accumulate here and are compared with materiality (SSA 450.5 and .11).</div>
+        <div class="bar" role="img" aria-label="Confirmed misstatements ${fmt(conf)} against overall materiality ${fmt(om)}">
+          <div class="fill" style="width:${Math.min(100, conf/max*100)}%"></div>
+          <div class="mark" style="left:${ct/max*100}%"><span>CT</span></div>
+          <div class="mark" style="left:${pm/max*100}%"><span>PM ${fmt(pm)}</span></div>
+          <div class="mark" style="left:${om/max*100}%"><span>OM ${fmt(om)}</span></div>
+        </div>
+      </div>
+      ${settingsCard()}
+    </div>
+  </div>`;
+}
+function settingsCard(){
+  const s = S();
+  return `<div class="card">
+    <div class="card-head"><h2>Engagement &amp; materiality</h2><p>SSA 320.10–11</p></div>
+    <form id="settingsForm" class="grid" style="gap:14px">
+      <div class="field"><label for="s-entity">Entity</label><input class="input" id="s-entity" value="${esc(s.entity)}" placeholder="e.g. ABC Pte Ltd"></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label for="s-fy">Reporting date (FYE)</label><input class="input" type="date" id="s-fy" value="${esc(s.fyEnd)}"></div>
+        <div class="field"><label for="s-cur">Currency</label><input class="input" id="s-cur" value="${esc(s.currency)}"></div>
+        <div class="field"><label for="s-om">Overall materiality</label><input class="input num" type="number" min="0" step="any" id="s-om" value="${s.om}"></div>
+        <div class="field"><label for="s-pm">Performance materiality %</label><input class="input num" type="number" min="1" max="100" id="s-pm" value="${s.pmPct}"></div>
+        <div class="field"><label for="s-ct">Clearly trivial % of OM</label><input class="input num" type="number" min="0" max="20" step="any" id="s-ct" value="${s.ctPct}"></div>
+        <div class="field"><label>Thresholds</label><div class="num" style="padding-top:8px;font-size:15px">PM ${fmt(PM())} · CT ${fmt(CT())}</div></div>
+      </div>
+      <div class="row"><button class="btn primary" type="submit">Apply and re-run tests</button>
+        <span id="resetZone"><button class="btn ghost danger" type="button" data-act="reset-ask">Clear all data</button></span></div>
+    </form>
+  </div>`;
+}
+
+/* ---- Issues ---- */
+function vIssues(){
+  const F = state.ui.filters, q = F.q.toLowerCase();
+  let list = state.issues.filter(i =>
+    (!F.risk || riskOf(i) === F.risk) && (!F.cat || i.cat === F.cat) && (!F.prio || prioOf(i) === F.prio) &&
+    (F.status === "" ? true : F.status === "active" ? isActive(i) : i.status === F.status) &&
+    (!q || [i.title, i.detail, i.loc.fileName, i.loc.sheet, i.notes, issueNo(i), ...i.refs.map(r => r[0])].join(" ").toLowerCase().includes(q)));
+  list = sortedIssues(list);
+  const total = list.reduce((s,i)=>s+Math.abs(i.amount||0),0);
+  const opt = (arr, v, all) => `<option value="">${all}</option>` + arr.map(x => `<option ${x===v?"selected":""}>${esc(x)}</option>`).join("");
+  return `<div class="card">
+    <div class="card-head"><h2>Issue tracker</h2>
+      <div class="row"><button class="btn" data-act="export">Export CSV</button><button class="btn" data-act="copy">Copy table</button><button class="btn primary" data-act="new">Add issue</button></div></div>
+    <div class="toolbar">
+      <div class="field" style="flex:1 1 220px"><label for="f-q">Search</label><input class="input" id="f-q" value="${esc(F.q)}" placeholder="Title, file, SSA code, notes…"></div>
+      <div class="field"><label for="f-risk">Risk</label><select class="input" id="f-risk">${opt(RISKS,F.risk,"All risks")}</select></div>
+      <div class="field"><label for="f-prio">Priority</label><select class="input" id="f-prio">${opt(["P1","P2","P3"],F.prio,"All")}</select></div>
+      <div class="field"><label for="f-cat">Category</label><select class="input" id="f-cat">${opt(CATS,F.cat,"All categories")}</select></div>
+      <div class="field"><label for="f-status">Status</label><select class="input" id="f-status"><option value="active" ${F.status==="active"?"selected":""}>Not cleared</option><option value="" ${F.status===""?"selected":""}>All statuses</option>${STATUSES.map(s=>`<option ${s===F.status?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label for="f-sort">Rank by</label><select class="input" id="f-sort"><option value="score" ${state.ui.sort==="score"?"selected":""}>Risk score</option><option value="amount" ${state.ui.sort==="amount"?"selected":""}>Amount</option><option value="newest" ${state.ui.sort==="newest"?"selected":""}>Newest</option></select></div>
+    </div>
+    <p class="muted" style="margin:14px 0 0;font-size:15px">${list.length} issue(s) · ${money(total)} flagged. Risk score = test weight (fraud indicators score highest) + size against CT / PM / OM.</p>
+  </div>
+  ${list.length ? `<div class="issues">${list.map(issueCard).join("")}</div>` : `<div class="card empty">No issues match these filters.</div>`}`;
+}
+
+/* ---- Files ---- */
+function vFiles(){
+  const f = state.files.find(x => x.id === state.ui.fileId) || state.files[0];
+  const sh = f && (f.sheets.find(s => s.name === state.ui.sheet) || f.sheets[0]);
+  return `<div class="grid g2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+    <div class="card">
+      <div class="card-head"><h2>Upload for testing</h2><p>.xlsx, .xls, .csv</p></div>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose Excel files to upload">
+        <b>Drop Excel files here</b><span class="muted">or click to choose. General ledgers, journal listings, trial balances and sub-ledgers work best.</span>
+      </div>
+      <p class="note" style="margin:12px 0 0">Files are read in your browser and kept in this browser's local storage. Nothing is sent anywhere.</p>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Files</h2><p>${state.files.length} file(s)</p></div>
+      <div class="files">${state.files.length ? state.files.map(x => `
+        <div class="fileitem ${f && x.id===f.id?"sel":""}">
+          <div style="min-width:0"><div style="font-weight:600;word-break:break-all">${esc(x.name)}${x.sample?' <span class="chip cat">sample</span>':""}</div>
+            <div class="note">${x.sheets.length} sheet(s) · ${x.sheets.reduce((s,y)=>s+y.rows.length,0)} rows · ${state.issues.filter(i=>i.loc.fileId===x.id && isActive(i)).length} open issues</div>
+            <div class="sheets" style="margin-top:8px">${x.sheets.map(y => `<button class="btn sm ${f && x.id===f.id && sh && y.name===sh.name?"primary":""}" data-act="sheet" data-file="${x.id}" data-sheet="${esc(y.name)}">${esc(y.name)}</button>`).join("")}</div></div>
+          <button class="btn sm ghost danger" data-act="del-file" data-file="${x.id}">Remove</button>
+        </div>`).join("") : `<div class="empty">No files yet.</div>`}</div>
+    </div>
+  </div>
+  ${sh ? sheetPanel(f, sh) : ""}`;
+}
+function sheetPanel(f, sh){
+  const hits = new Map();
+  state.issues.filter(i => i.loc.fileId===f.id && i.loc.sheet===sh.name && isActive(i)).forEach(i => i.loc.rows.forEach(n => { if (!hits.has(n)) hits.set(n, []); hits.get(n).push(i); }));
+  const sel = (k) => `<div class="field"><label for="map-${k}">${FIELD_LABEL[k]}</label><select class="input" id="map-${k}" data-map="${k}"><option value="-1">— none —</option>${sh.header.map((h,i)=>`<option value="${i}" ${sh.map[k]===i?"selected":""}>${colLetter((sh.colStart||0)+i)} · ${esc(h)}</option>`).join("")}</select></div>`;
+  let idx = sh.rows.map((_,i) => i);
+  if (state.ui.flaggedOnly) idx = idx.filter(i => hits.has(sh.rowNums[i]));
+  const LIM = 1500, shown = idx.slice(0, LIM);
+  const numCols = new Set([sh.map.debit, sh.map.credit, sh.map.amount].filter(x=>x>=0));
+  return `<div class="card">
+    <div class="card-head"><h2>${esc(f.name)} › ${esc(sh.name)}</h2><p>Header found on Excel row ${sh.headerRow} · ${sh.rows.length} data rows${sh.truncated?" (first 20,000 kept)":""}</p></div>
+    <h3 style="margin-bottom:10px">Column mapping</h3>
+    <p class="note" style="margin:0 0 12px">Columns were matched automatically. Correct any that are wrong and the tests re-run on this sheet.</p>
+    <div class="maprow">${Object.keys(FIELD_LABEL).map(sel).join("")}</div>
+  </div>
+  <div class="card" id="viewer">
+    <div class="card-head"><h2>Source lines</h2>
+      <div class="row"><label class="row" style="gap:8px;font-size:16px"><input type="checkbox" id="flaggedOnly" ${state.ui.flaggedOnly?"checked":""}> Show flagged rows only</label></div></div>
+    <p class="note" style="margin:0 0 12px">Rows flagged by an open issue are highlighted in orange. Hover a row number to see which issues point to it. ${idx.length>LIM?`Showing first ${LIM} of ${idx.length} rows.`:""}</p>
+    <div class="gridwrap"><table class="dg"><thead><tr><th class="rn">Row</th>${sh.header.map((h,i)=>`<th><span class="cl">${colLetter((sh.colStart||0)+i)}</span>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${shown.map(i => { const n = sh.rowNums[i], h = hits.get(n);
+      return `<tr id="r-${n}" class="${h?"hit":""}"><td class="rn" ${h?`title="${esc(h.map(x=>issueNo(x)+" "+x.title).join("\n"))}"`:""}>${n}</td>${sh.header.map((_,c) => { const v = sh.rows[i][c];
+        return `<td class="${numCols.has(c) && typeof v==="number"?"n":""}">${typeof v==="number" && numCols.has(c) ? fmt(v,2) : esc(v ?? "")}</td>`; }).join("")}</tr>`; }).join("")}</tbody></table></div>
+  </div>`;
+}
+function bindFiles(){
+  const drop = $("#drop"); if (!drop) return;
+  drop.onclick = () => $("#fileInput").click();
+  drop.onkeydown = e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); $("#fileInput").click(); } };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); handleFiles(e.dataTransfer.files); };
+  document.querySelectorAll("[data-map]").forEach(s => s.onchange = () => {
+    const f = state.files.find(x => x.id === state.ui.fileId) || state.files[0];
+    const sh = f.sheets.find(x => x.name === state.ui.sheet) || f.sheets[0];
+    sh.map[s.dataset.map] = +s.value; retest([f.id]); save(); render(); toast("Mapping updated and tests re-run.");
+  });
+  const fo = $("#flaggedOnly"); if (fo) fo.onchange = () => { state.ui.flaggedOnly = fo.checked; save(); render(); };
+  if (pendingRow){ const el = document.getElementById("r-"+pendingRow); if (el){ el.classList.add("focus"); el.scrollIntoView({block:"center"}); } pendingRow = null; }
+}
+let pendingRow = null;
+async function handleFiles(list){
+  if (typeof XLSX === "undefined"){ toast("The spreadsheet reader did not load. Check your connection and reload the page."); return; }
+  let added = 0, before = state.issues.filter(i=>i.auto).length;
+  for (const file of list){
+    try {
+      const buf = await file.arrayBuffer();
+      const f = parseWorkbook(new Uint8Array(buf), file.name);
+      if (!f.sheets.length){ toast(`${file.name} has no readable sheets.`); continue; }
+      state.files.push(f); retest([f.id]); added++;
+      state.ui.fileId = f.id; state.ui.sheet = f.sheets[0].name;
+    } catch(err){ toast(`Could not read ${file.name}: ${err.message}`); }
+  }
+  if (added){ save(); render(); const n = state.issues.filter(i=>i.auto).length - before; toast(`${added} file(s) tested · ${n} issue(s) raised.`); }
+  $("#fileInput").value = "";
+}
+
+/* ---- References ---- */
+let refFocus = null;
+function vRefs(){
+  const cited = {};
+  state.issues.filter(isActive).forEach(i => i.refs.forEach(([c,ps]) => ps.forEach(p => { const k = c+"|"+p; (cited[k] = cited[k]||[]).push(i); })));
+  const block = kind => Object.entries(LIB).filter(([,v]) => v.kind===kind).map(([code,v]) => `
+    <div class="std" id="std-${slug(code)}">
+      <div class="std-h"><b>${esc(code)}</b><span>${esc(v.title)}</span></div>
+      ${v.paras.map(([p,t]) => { const c = cited[code+"|"+p] || [], id = "p-"+slug(code)+"-"+slug(p), foc = refFocus === id;
+        return `<div class="para ${c.length||foc?"hit":""}" id="${id}" ${foc?'style="outline:3px solid var(--accent);outline-offset:-3px"':""}><div class="pn">${esc(code.startsWith("SFRS")?"para "+p:p)}</div>
+          <div>${esc(t)}${c.length?`<div class="row" style="margin-top:6px">${c.slice(0,6).map(i=>`<button class="chip ref" data-act="open" data-id="${i.id}">${issueNo(i)}</button>`).join("")}${c.length>6?`<span class="note">+${c.length-6}</span>`:""}</div>`:""}</div></div>`; }).join("")}
+    </div>`).join("");
+  return `<div class="card"><div class="card-head"><h2>Standards library</h2><p>Paragraphs cited by open issues are highlighted</p></div>
+    <p class="muted" style="margin:0;font-size:16px">Singapore Standards on Auditing (SSA) and Singapore Financial Reporting Standards (International). Text is a short paraphrase to orient the reviewer. Always read the official text published by ISCA and ASC before concluding, and check paragraph numbers against the edition in force for the engagement period.</p></div>
+    <h2 style="margin-top:8px">Singapore Standards on Auditing</h2><div class="lib">${block("SSA")}</div>
+    <h2 style="margin-top:8px">SFRS(I)</h2><div class="lib">${block("SFRS(I)")}</div>`;
+}
+const slug = s => String(s).replace(/[^A-Za-z0-9]+/g,"-");
+
+/* ---- Detail drawer ---- */
+let openId = null;
+function openIssue(id){
+  const i = state.issues.find(x => x.id == id); if (!i) return;
+  openId = i.id;
+  const T = TESTS[i.testId] || TESTS.manual, r = riskOf(i);
+  const f = state.files.find(x => x.id === i.loc.fileId), sh = f && f.sheets.find(s => s.name === i.loc.sheet);
+  let lines = "";
+  if (sh && i.loc.rows.length){
+    const ix = new Map(sh.rowNums.map((n,k)=>[n,k])), cols = new Set(i.loc.cols || []);
+    const numCols = new Set([sh.map.debit, sh.map.credit, sh.map.amount].filter(x=>x>=0));
+    const rows = i.loc.rows.slice(0,100).filter(n => ix.has(n));
+    lines = `<div class="gridwrap" style="max-height:360px"><table class="dg"><thead><tr><th class="rn">Row</th>${sh.header.map((h,c)=>`<th><span class="cl">${colLetter((sh.colStart||0)+c)}</span>${esc(h)}</th>`).join("")}</tr></thead><tbody>
+      ${rows.map(n => { const row = sh.rows[ix.get(n)]; return `<tr class="hit"><td class="rn">${n}</td>${sh.header.map((_,c) => { const v = row[c];
+        return `<td class="${cols.has(c)?"hitcell ":""}${numCols.has(c)&&typeof v==="number"?"n":""}">${typeof v==="number"&&numCols.has(c)?fmt(v,2):esc(v??"")}</td>`; }).join("")}</tr>`; }).join("")}
+    </tbody></table></div>${i.loc.rows.length>100?`<p class="note">Showing 100 of ${i.loc.rows.length} rows.</p>`:""}`;
+  }
+  const stds = i.refs.map(([code,ps]) => { const L = LIB[code];
+    if (!L) return `<div class="std"><div class="std-h"><b>${esc(code)}</b><span>Paragraph ${esc(ps.join(", "))}</span></div></div>`;
+    const missing = ps.filter(p => !L.paras.some(x => x[0]===p));
+    return `<div class="std"><div class="std-h"><b>${esc(code)}</b><span>${esc(L.title)}</span></div>
+      ${L.paras.map(([p,t]) => { const hit = ps.includes(p);
+        return `<div class="para ${hit?"hit":""}"><div class="pn">${esc(code.startsWith("SFRS")?"para "+p:p)}</div><div>${esc(t)}${hit?`<span class="tag">Applies</span>`:""}</div></div>`; }).join("")}
+      ${missing.map(p => `<div class="para hit"><div class="pn">${esc(p)}</div><div>Cited paragraph (not in the built-in library; see the official text).<span class="tag">Applies</span></div></div>`).join("")}
+      <div class="para"><div></div><div><button class="btn sm ghost" data-act="ref" data-code="${esc(code)}" data-para="${esc(ps[0]||"")}">Open ${esc(code)} in library →</button></div></div>
+    </div>`; }).join("");
+  $("#drawer").innerHTML = `<div class="drawer-in">
+    <div class="dhead"><div><div class="id mono muted">${issueNo(i)} · ${i.auto?"Automated test":"Manual issue"}</div><h2>${esc(i.title)}</h2></div>
+      <button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+    <div class="row">${riskChip(r)}<span class="chip p">${prioOf(i)}</span><span class="chip cat">${esc(i.cat)}</span>${statusChip(i.status)}<span class="chip cat">Score ${score(i)}/6</span></div>
+    <div class="card"><div class="stat"><div class="label">Amount at issue</div><div class="value num">${i.amount ? money(i.amount) : "—"}</div>
+      <div class="sub">${i.amount ? `${(Math.abs(i.amount)/PM()*100).toFixed(0)}% of performance materiality · ${(Math.abs(i.amount)/S().om*100).toFixed(0)}% of overall materiality` : "No monetary amount for this issue"}</div></div></div>
+    <div class="card"><div class="card-head"><h3>Where to find it</h3>${sh?`<button class="btn sm" data-act="goto" data-id="${i.id}">Open in file viewer</button>`:""}</div>
+      <dl class="kv"><dt>File</dt><dd>${esc(i.loc.fileName||"—")}</dd><dt>Sheet</dt><dd>${esc(i.loc.sheet||"—")}</dd>
+      <dt>Excel rows</dt><dd class="num">${esc(i.loc.rows.length ? i.loc.rows.slice(0,40).join(", ") + (i.loc.rows.length>40?" …":"") : "Whole sheet")}</dd>
+      ${colsText(i)?`<dt>Columns</dt><dd>${colsText(i)}</dd>`:""}
+      ${i.detail?`<dt>Finding</dt><dd>${esc(i.detail)}</dd>`:""}</dl>
+      ${lines?`<div style="margin-top:14px">${lines}</div>`:""}
+    </div>
+    ${T.why||i.why?`<div class="card"><h3 style="margin-bottom:8px">Why this matters</h3><p style="margin:0">${esc(i.why||T.why)}</p>
+      ${T.proc?`<div class="callout" style="margin-top:12px"><b>Suggested procedure.</b> ${esc(T.proc)}</div>`:""}</div>`:""}
+    <div class="card"><div class="card-head"><h3>SSA / SFRS(I) references</h3><p>Applicable paragraphs highlighted</p></div>
+      <div class="grid" style="gap:12px">${stds || `<p class="muted">No references yet.</p>`}</div>
+      <div class="row" style="margin-top:14px;align-items:end">
+        <div class="field"><label for="ar-code">Add reference</label><select class="input" id="ar-code">${Object.keys(LIB).map(k=>`<option>${esc(k)}</option>`).join("")}</select></div>
+        <div class="field"><label for="ar-para">Paragraph(s)</label><input class="input" id="ar-para" placeholder="e.g. 32(a), 26"></div>
+        <button class="btn" data-act="add-ref" data-id="${i.id}">Add</button></div>
+    </div>
+    <div class="card"><h3 style="margin-bottom:12px">Working</h3>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
+        <div class="field"><label for="d-status">Status</label><select class="input" id="d-status">${STATUSES.map(s=>`<option ${s===i.status?"selected":""}>${s}</option>`).join("")}</select></div>
+        <div class="field"><label for="d-prio">Priority</label><select class="input" id="d-prio"><option value="">Auto (${({High:"P1",Medium:"P2",Low:"P3"})[r]})</option>${["P1","P2","P3"].map(p=>`<option ${p===i.prio?"selected":""}>${p}</option>`).join("")}</select></div>
+        <div class="field"><label for="d-risk">Risk</label><select class="input" id="d-risk"><option value="">Auto (${score(i)>=5?"High":score(i)>=3?"Medium":"Low"})</option>${RISKS.map(x=>`<option ${x===i.riskOverride?"selected":""}>${x}</option>`).join("")}</select></div>
+        <div class="field"><label for="d-cat">Category</label><select class="input" id="d-cat">${CATS.map(c=>`<option ${c===i.cat?"selected":""}>${c}</option>`).join("")}</select></div>
+        <div class="field"><label for="d-amt">Amount</label><input class="input num" type="number" step="any" id="d-amt" value="${i.amount||0}"></div>
+      </div>
+      <div class="field" style="margin-top:12px"><label for="d-notes">Work done, evidence and conclusion</label><textarea class="input" id="d-notes" placeholder="Procedures performed, documents inspected, who you spoke to, conclusion…">${esc(i.notes)}</textarea></div>
+      <div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn primary" data-act="save-issue" data-id="${i.id}">Save changes</button>
+        <span id="delZone"><button class="btn ghost danger" data-act="del-ask" data-id="${i.id}">Delete issue</button></span></div>
+      ${i.auto?`<p class="note" style="margin:10px 0 0">Status, priority and notes are kept when tests re-run. Deleted automated issues come back on the next re-run unless the data changes.</p>`:""}
+    </div>
+  </div>`;
+  $("#drawer").classList.add("open"); $("#scrim").classList.add("open");
+  $("#drawer").scrollTop = 0;
+}
+function closeDrawer(){ $("#drawer").classList.remove("open"); $("#scrim").classList.remove("open"); openId = null; }
+
+/* ---- new issue modal ---- */
+function newIssueModal(){
+  const fileOpts = state.files.flatMap(f => f.sheets.map(s => `<option value="${esc(f.id)}|${esc(s.name)}">${esc(f.name)} › ${esc(s.name)}</option>`)).join("");
+  $("#modal").innerHTML = `<div class="card" role="dialog" aria-modal="true" aria-labelledby="ni-h"><div class="card-head"><h2 id="ni-h">Add issue</h2><button class="btn ghost" data-act="modal-close" aria-label="Close">✕</button></div>
+    <form id="newIssue" class="grid" style="gap:12px">
+      <div class="field"><label for="n-title">Title</label><input class="input" id="n-title" required placeholder="e.g. Unrecorded liability for June utilities"></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label for="n-amt">Amount</label><input class="input num" type="number" step="any" id="n-amt" value="0"></div>
+        <div class="field"><label for="n-cat">Category</label><select class="input" id="n-cat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select></div>
+        <div class="field"><label for="n-w">Inherent risk</label><select class="input" id="n-w"><option value="3">Fraud / significant risk</option><option value="2" selected>Normal</option><option value="1">Low</option></select></div>
+        <div class="field"><label for="n-loc">File and sheet</label><select class="input" id="n-loc"><option value="">Not linked to a file</option>${fileOpts}</select></div>
+      </div>
+      <div class="field"><label for="n-rows">Excel rows (comma separated)</label><input class="input" id="n-rows" placeholder="e.g. 45, 46"></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label for="n-code">Standard</label><select class="input" id="n-code">${Object.keys(LIB).map(k=>`<option>${esc(k)}</option>`).join("")}</select></div>
+        <div class="field"><label for="n-para">Paragraph(s)</label><input class="input" id="n-para" placeholder="e.g. 18"></div>
+      </div>
+      <div class="field"><label for="n-desc">Description</label><textarea class="input" id="n-desc" placeholder="What you found and why it matters"></textarea></div>
+      <div class="row"><button class="btn primary" type="submit">Add issue</button><button class="btn ghost" type="button" data-act="modal-close">Cancel</button></div>
+    </form></div>`;
+  $("#modal").classList.add("open"); $("#n-title").focus();
+}
+
+/* ---- export ---- */
+function issuesTable(sep){
+  const q = v => { const s = String(v ?? ""); return sep === "," ? `"${s.replace(/"/g,'""')}"` : s.replace(/[\t\n\r]+/g," "); };
+  const head = ["Ref","Title","Risk","Priority","Score","Category","Status","Amount","Currency","File","Sheet","Excel rows","Finding","Standards","Notes"];
+  const body = sortedIssues(state.issues).map(i => [issueNo(i), i.title, riskOf(i), prioOf(i), score(i), i.cat, i.status, (i.amount||0).toFixed(2), S().currency,
+    i.loc.fileName||"", i.loc.sheet||"", i.loc.rows.join(" "), i.detail||"", i.refs.map(([c,ps]) => ps.map(p => refLabel(c,p)).join("; ")).join("; "), i.notes||""]);
+  return [head, ...body].map(r => r.map(q).join(sep)).join("\n");
+}
+async function exportCsv(){
+  const data = "﻿" + issuesTable(",");
+  try {
+    const dl = window.claude && await window.claude.use("downloads");
+    if (dl){ await dl.save({filename:`audit-issues-${new Date().toISOString().slice(0,10)}.csv`, data}); return; }
+  } catch(e){ if (e && /declin|cancel|abort/i.test(String(e.message||e))) return; }
+  if (!window.claude){ /* standalone hosting (e.g. Vercel): normal browser download */
+    try {
+      const url = URL.createObjectURL(new Blob([data], {type:"text/csv;charset=utf-8"}));
+      const a = Object.assign(document.createElement("a"), {href:url, download:`audit-issues-${new Date().toISOString().slice(0,10)}.csv`});
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); return;
+    } catch(_){}
+  }
+  copyOut(issuesTable("\t"), "Download is not available here, so the table was copied instead. Paste it into Excel.");
+}
+async function copyOut(text, msg){
+  try { await navigator.clipboard.writeText(text); toast(msg || "Issue table copied. Paste it into Excel."); }
+  catch(e){
+    $("#modal").innerHTML = `<div class="card"><div class="card-head"><h2>Copy the issue table</h2><button class="btn ghost" data-act="modal-close" aria-label="Close">✕</button></div>
+      <p class="muted" style="margin-top:0">Select all and copy, then paste into Excel.</p><textarea class="input" style="width:100%;min-height:300px;font-family:var(--mono);font-size:13px" readonly>${esc(text)}</textarea></div>`;
+    $("#modal").classList.add("open"); $("#modal textarea").select();
+  }
+}
+
+/* ===================== events ===================== */
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-act]"); if (!t) return;
+  const a = t.dataset.act;
+  if (a === "open"){ e.stopPropagation(); openIssue(t.dataset.id); }
+  else if (a === "close") closeDrawer();
+  else if (a === "ref"){ e.stopPropagation(); refFocus = "p-"+slug(t.dataset.code)+"-"+slug(t.dataset.para); closeDrawer(); if (location.hash === "#references") render(); else location.hash = "references"; }
+  else if (a === "filter"){ Object.assign(state.ui.filters, {cat:t.dataset.cat, risk:t.dataset.risk, status:"active", prio:"", q:""}); save(); location.hash = "issues"; }
+  else if (a === "upload"){ location.hash = "files"; $("#fileInput").click(); }
+  else if (a === "remove-sample"){ state.files = state.files.filter(f => !f.sample); state.issues = state.issues.filter(i => !i.sample); state.sample = false; if (S().entity.includes("(sample)")) S().entity = ""; state.ui.fileId = null; save(); render(); toast("Sample removed."); }
+  else if (a === "sheet"){ state.ui.fileId = t.dataset.file; state.ui.sheet = t.dataset.sheet; save(); render(); }
+  else if (a === "del-file"){ const id = t.dataset.file; state.files = state.files.filter(f => f.id !== id); state.issues = state.issues.filter(i => !(i.auto && i.loc.fileId === id)); if (id==="sample") state.sample=false; state.ui.fileId = null; save(); render(); toast("File removed with its automated issues."); }
+  else if (a === "goto"){ const i = state.issues.find(x => x.id == t.dataset.id); state.ui.fileId = i.loc.fileId; state.ui.sheet = i.loc.sheet; state.ui.flaggedOnly = false; pendingRow = i.loc.rows[0]; save(); closeDrawer(); if (location.hash === "#files") render(); else location.hash = "files"; }
+  else if (a === "save-issue"){
+    const i = state.issues.find(x => x.id == t.dataset.id);
+    i.status = $("#d-status").value; i.prio = $("#d-prio").value; i.riskOverride = $("#d-risk").value; i.cat = $("#d-cat").value;
+    i.amount = num($("#d-amt").value) || 0; i.notes = $("#d-notes").value;
+    save(); render(); openIssue(i.id); toast("Issue saved.");
+  }
+  else if (a === "add-ref"){
+    const i = state.issues.find(x => x.id == t.dataset.id), code = $("#ar-code").value;
+    const ps = $("#ar-para").value.split(/[,;]/).map(s => s.trim().replace(/^para\s*/i,"")).filter(Boolean);
+    const ex = i.refs.find(r => r[0] === code);
+    if (ex) ex[1] = [...new Set(ex[1].concat(ps))]; else i.refs.push([code, ps]);
+    if (i.auto){ i.extraRefs = i.extraRefs || []; i.extraRefs.push([code, ps]); }
+    save(); render(); openIssue(i.id);
+  }
+  else if (a === "del-ask"){ $("#delZone").innerHTML = `<span class="row"><span class="muted">Delete this issue?</span><button class="btn sm danger" data-act="del" data-id="${t.dataset.id}">Delete</button><button class="btn sm ghost" data-act="del-cancel" data-id="${t.dataset.id}">Keep</button></span>`; }
+  else if (a === "del-cancel"){ openIssue(t.dataset.id); }
+  else if (a === "del"){ state.issues = state.issues.filter(x => x.id != t.dataset.id); save(); closeDrawer(); render(); toast("Issue deleted."); }
+  else if (a === "reset-ask"){ $("#resetZone").innerHTML = `<span class="row"><span class="muted">Remove all files, issues and settings?</span><button class="btn sm danger" type="button" data-act="reset">Clear all</button><button class="btn sm ghost" type="button" data-act="reset-cancel">Cancel</button></span>`; }
+  else if (a === "reset-cancel"){ render(); }
+  else if (a === "reset"){ state = defaults(); save(); render(); toast("All data cleared. Use Load sample or upload a file to start again."); }
+  else if (a === "new") newIssueModal();
+  else if (a === "modal-close") $("#modal").classList.remove("open");
+  else if (a === "export") exportCsv();
+  else if (a === "copy") copyOut(issuesTable("\t"));
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape"){ closeDrawer(); $("#modal").classList.remove("open"); }
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("icard")){ e.preventDefault(); openIssue(e.target.dataset.id); }
+});
+$("#scrim").addEventListener("click", closeDrawer);
+$("#modal").addEventListener("click", e => { if (e.target.id === "modal") $("#modal").classList.remove("open"); });
+document.addEventListener("submit", e => {
+  e.preventDefault();
+  if (e.target.id === "settingsForm"){
+    const s = S();
+    s.entity = $("#s-entity").value.trim(); s.fyEnd = $("#s-fy").value; s.currency = $("#s-cur").value.trim() || "SGD";
+    s.om = Math.max(0, num($("#s-om").value) || 0); s.pmPct = Math.min(100, Math.max(1, num($("#s-pm").value) || 75)); s.ctPct = Math.min(20, Math.max(0, num($("#s-ct").value) ?? 5));
+    retest(); save(); render(); toast("Settings applied. All files re-tested.");
+  }
+  if (e.target.id === "newIssue"){
+    const loc = $("#n-loc").value.split("|"), f = state.files.find(x => x.id === loc[0]);
+    const sh = f && f.sheets.find(s => s.name === loc.slice(1).join("|"));
+    const ps = $("#n-para").value.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+    const i = {id:state.seq++, auto:false, testId:"manual", title:$("#n-title").value.trim(), cat:$("#n-cat").value, wOverride:+$("#n-w").value,
+      amount:num($("#n-amt").value) || 0, count:0, detail:$("#n-desc").value.trim(), why:"",
+      loc:{fileId:f?f.id:null, fileName:f?f.name:"", sheet:sh?sh.name:"", rows:$("#n-rows").value.split(/[,\s]+/).map(Number).filter(n => n > 0), cols:[]},
+      refs: ps.length || $("#n-code").value ? [[$("#n-code").value, ps]] : [], status:"Open", prio:"", notes:"", created:new Date().toISOString()};
+    state.issues.push(i); save(); $("#modal").classList.remove("open"); render(); openIssue(i.id); toast(`${issueNo(i)} added.`);
+  }
+});
+document.addEventListener("input", e => {
+  if (e.target.id === "f-q"){ state.ui.filters.q = e.target.value; clearTimeout(window._qt); window._qt = setTimeout(() => { save(); const p = e.target.selectionStart; render(); const el = $("#f-q"); el.focus(); el.setSelectionRange(p,p); }, 220); }
+});
+document.addEventListener("change", e => {
+  const id = e.target.id, F = state.ui.filters;
+  const m = {"f-risk":"risk","f-cat":"cat","f-status":"status","f-prio":"prio"};
+  if (m[id]){ F[m[id]] = e.target.value; save(); render(); }
+  if (id === "f-sort"){ state.ui.sort = e.target.value; save(); render(); }
+});
+$("#fileInput").addEventListener("change", e => handleFiles(e.target.files));
+window.addEventListener("hashchange", route);
+
+/* ===================== boot ===================== */
+state = load();
+if (!state){ state = defaults(); loadSample(); save(); }
+state.ui = Object.assign(defaults().ui, state.ui || {});
+route();
+</script>
+</body>
+</html>
